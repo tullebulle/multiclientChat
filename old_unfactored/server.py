@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import protocol
 import json_protocol
 import logging
+import fnmatch
 
 # Set up logging
 logging.basicConfig(
@@ -115,6 +116,74 @@ class ChatServer:
         password_hash, _ = self.hash_password(password, user.salt)
         return password_hash == user.password_hash
 
+    def list_accounts(self, pattern: str = "*", page: int = 1, page_size: int = 10) -> dict:
+        """
+        List accounts matching the given pattern with pagination.
+        
+        Args:
+            pattern: Wildcard pattern to match usernames against
+            page: Page number (1-based)
+            page_size: Number of accounts per page
+            
+        Returns:
+            dict containing:
+                accounts: List of matching usernames for the requested page
+                total_accounts: Total number of matching accounts
+                total_pages: Total number of pages
+        """
+        # Find all matching accounts
+        matching_accounts = [
+            username for username in self.users.keys()
+            if fnmatch.fnmatch(username, pattern)
+        ]
+        
+        # Sort for consistent ordering
+        matching_accounts.sort()
+        
+        # Calculate pagination
+        total_accounts = len(matching_accounts)
+        total_pages = (total_accounts + page_size - 1) // page_size
+        
+        # Calculate slice indices
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        
+        # Get accounts for requested page
+        page_accounts = matching_accounts[start_idx:end_idx]
+        
+        return {
+            "accounts": page_accounts,
+            "total_accounts": total_accounts,
+            "total_pages": total_pages
+        }
+
+    def list_accounts_binary(self, pattern: str) -> bytes:
+        """
+        List accounts matching the given pattern in binary format.
+        Used by the custom protocol.
+        
+        Args:
+            pattern: Wildcard pattern to match usernames against
+            
+        Returns:
+            bytes in format: [num_accounts][len_name1][name1][len_name2][name2]...
+        """
+        matching_accounts = [
+            username for username in self.users.keys()
+            if fnmatch.fnmatch(username, pattern)
+        ]
+        matching_accounts.sort()
+        
+        # Start with number of accounts
+        result = bytes([len(matching_accounts)])
+        
+        # Add each account name with its length prefix
+        for username in matching_accounts:
+            name_bytes = username.encode('utf-8')
+            result += bytes([len(name_bytes)]) + name_bytes
+            
+        return result
+
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     """Threaded TCP server to handle multiple clients."""
     allow_reuse_address = True
@@ -127,7 +196,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 class ChatRequestHandler(socketserver.BaseRequestHandler):
     def setup(self):
         """Get reference to the shared chat server instance"""
-        self.chat_server = self.server.chat_server
+        self.chat_server = self.server.chat_server  # Get reference from server
         self.current_user = None
     
     def handle_custom_protocol(self, command: protocol.Command, payload: bytes):
@@ -164,6 +233,19 @@ class ChatRequestHandler(socketserver.BaseRequestHandler):
                 else:
                     response = protocol.encode_message(command, b'\x00')  # Failure
                     
+                self.request.send(response)
+                
+            elif command == protocol.Command.LIST_ACCOUNTS:
+                # First byte is pattern length
+                pattern_len = payload[0]
+                pattern = payload[1:pattern_len+1].decode('utf-8')
+                
+                # Get binary format of matching accounts
+                response_payload = self.chat_server.list_accounts_binary(pattern)
+                response = protocol.encode_message(
+                    protocol.Command.LIST_ACCOUNTS,
+                    response_payload
+                )
                 self.request.send(response)
                 
             else:
@@ -223,6 +305,22 @@ class ChatRequestHandler(socketserver.BaseRequestHandler):
                     'message': 'Account created' if success else 'Username taken'
                 }
                 
+            elif command == json_protocol.Command.LIST_ACCOUNTS:
+                # Extract pagination parameters with defaults
+                pattern = payload.get('pattern', '*')
+                page = payload.get('page', 1)
+                page_size = payload.get('page_size', 10)
+                
+                # Get account listing
+                result = self.chat_server.list_accounts(pattern, page, page_size)
+                
+                response = {
+                    'status': 'success',
+                    'accounts': result['accounts'],
+                    'total_accounts': result['total_accounts'],
+                    'total_pages': result['total_pages']
+                }
+                
             else:
                 # Ensure user is authenticated for other commands
                 if not self.current_user:
@@ -238,21 +336,21 @@ class ChatRequestHandler(socketserver.BaseRequestHandler):
                         'message': 'Command not implemented'
                     }
                     
-            self.request.send(json_protocol.encode_message(
-                command,
-                response
-            ))
+            # Send response in a single message
+            encoded_response = json_protocol.encode_message(command, response)
+            self.request.sendall(encoded_response)  # Use sendall instead of send
             
         except Exception as e:
             logging.error(f"Error handling JSON protocol: {e}")
-            response = {
+            error_response = {
                 'status': 'error',
                 'message': str(e)
             }
-            self.request.send(json_protocol.encode_message(
+            encoded_error = json_protocol.encode_message(
                 json_protocol.Command.ERROR,
-                response
-            ))
+                error_response
+            )
+            self.request.sendall(encoded_error)  # Use sendall for error responses too
 
     def handle(self):
         """Handle incoming client connection."""
