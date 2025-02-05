@@ -14,6 +14,18 @@ To run a client gui, use the following command:
 python chat_app/run_gui.py --protocol custom
 ```
 
+To unit test the custom protocol, use the following command:
+
+```bash
+python -m chat_app.custom_protocol.tests.test_protocol
+```
+
+To run the integration tests, use the following command:
+
+```bash
+python -m chat_app.custom_protocol.tests.test_integration
+```
+
 #### JSON Protocol
 
 likewise, to run a client gui with the JSON protocol, use the following command:

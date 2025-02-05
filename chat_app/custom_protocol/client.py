@@ -30,10 +30,18 @@ class CustomChatClient:
         self.current_user = None
         logging.debug(f"Initialized client for {host}:{port}")
         
-    def connect(self) -> bool:
-        """Connect to the chat server"""
+    def connect(self, server_address=None) -> bool:
+        """
+        Connect to the chat server
+        
+        Args:
+            server_address: Optional tuple of (host, port). If not provided, uses default.
+        """
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if server_address:
+                self.host, self.port = server_address
+            
             logging.debug(f"Attempting to connect to {self.host}:{self.port}")
             self.sock.connect((self.host, self.port))
             logging.debug(f"Successfully connected to {self.host}:{self.port}")
@@ -341,6 +349,26 @@ class CustomChatClient:
             return success
         return False
 
+    def get_unread_count(self) -> int:
+        """
+        Get count of unread messages for current user
+        
+        Returns:
+            int: Number of unread messages, or -1 if error
+        """
+        if not self.current_user:
+            logging.error("Not logged in")
+            return -1
+        
+        response = self.send_command(protocol.Command.GET_UNREAD_COUNT, b'')
+        if response:
+            cmd, result = response
+            if cmd == protocol.Command.ERROR:
+                logging.error(f"Failed to get unread count: {result.decode()}")
+                return -1
+            return struct.unpack('!H', result)[0]
+        return -1
+
     def main_loop(self):
         """Main client loop"""
         commands = {
@@ -352,7 +380,8 @@ class CustomChatClient:
             "6": ("Mark messages as read", self.mark_read),
             "7": ("Delete messages", self.delete_messages),
             "8": ("Delete account", self.delete_account),
-            "9": ("Quit", lambda: "quit")
+            "9": ("Get unread count", self.get_unread_count),
+            "10": ("Quit", lambda: "quit")
         }
         
         while True:

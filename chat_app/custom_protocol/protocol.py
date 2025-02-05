@@ -19,6 +19,7 @@ class Command(IntEnum):
     MARK_READ = 6
     DELETE_MESSAGES = 7
     DELETE_ACCOUNT = 8
+    GET_UNREAD_COUNT = 9
 
 def encode_message(command: Command, payload: bytes) -> bytes:
     """

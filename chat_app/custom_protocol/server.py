@@ -276,6 +276,26 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                     logging.error(f"Error deleting account: {e}")
                     self.send_error(str(e))
             
+            elif command == protocol.Command.GET_UNREAD_COUNT:
+                try:
+                    if not self.current_user:
+                        raise ValueError("Not authenticated")
+                    
+                    # Get unread messages for current user
+                    messages = self.chat_server.get_messages(
+                        self.current_user,
+                        include_read=False
+                    )
+                    
+                    # Response: [count:2]
+                    count = len(messages)
+                    response = struct.pack('!H', count)
+                    self.send_response(command, response)
+                    
+                except ValueError as e:
+                    logging.error(f"Error getting unread count: {e}")
+                    self.send_error(str(e))
+            
             else:
                 self.send_error("Command not implemented")
                 
