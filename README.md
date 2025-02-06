@@ -1,6 +1,21 @@
 # multiclientChat
 
 
+#####
+To get started, clone the repository and run the server with the protocol of your choice.
+
+```bash
+git clone https://github.com/tullebulle/multiclientChat.git
+cd multiclientChat
+```
+
+You need Python with TKinter installed to run the gui. To get this, you can use the following command:
+
+```bash
+sudo apt-get install python3-tk
+```
+
+
 #### Custom Protocol
 To run the server with the custom protocol, use the following command from the root directory:
 
