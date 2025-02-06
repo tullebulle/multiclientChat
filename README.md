@@ -2,44 +2,41 @@
 
 
 #### Custom Protocol
-To run the server with the custom protocol, use the following command:
+To run the server with the custom protocol, use the following command from the root directory:
 
 ```bash
-python chat_app/run_server.py --protocol custom
+python src/run_server.py --protocol custom
 ```
 
-To run a client gui, use the following command:
+To run a client gui, use the following command from the root directory:
 
 ```bash
-python chat_app/run_gui.py --protocol custom
+python src/run_gui.py --protocol custom
 ```
 
-To unit test the custom protocol, use the following command:
-
-```bash
-python -m chat_app.custom_protocol.tests.test_protocol
-```
-
-To run the integration tests, use the following command:
-
-```bash
-python -m chat_app.custom_protocol.tests.test_integration
-```
 
 #### JSON Protocol
-
-likewise, to run a client gui with the JSON protocol, use the following command:
-
 
 To run the server with the JSON protocol, use the following command:
 
 ```bash
-python chat_app/run_server.py --protocol json
+python src/run_server.py --protocol json
 ```
 and run the gui client with the JSON protocol, use the following command:
 ```bash
-python chat_app/run_gui.py --protocol json
+python src/run_gui.py --protocol json
 ```
 
 
 
+
+### Testing
+Testing the custom protocol:
+```bash
+./src/custom_protocol/tests/run_tests.sh
+```
+
+Testing the JSON protocol:
+```bash
+./src/json_protocol/tests/run_tests.sh
+```

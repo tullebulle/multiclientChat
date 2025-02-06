@@ -5,7 +5,7 @@ Command-line test client for the custom protocol chat server.
 import socket
 import struct
 import logging
-from chat_app.custom_protocol import protocol
+from src.custom_protocol import protocol
 import sys
 
 logging.basicConfig(level=logging.DEBUG)

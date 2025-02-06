@@ -8,8 +8,8 @@ in terms of message size and encoding/decoding performance.
 import unittest
 import time
 from typing import Dict, Any, Tuple
-from chat_app.custom_protocol import protocol
-from chat_app.json_protocol import protocol as json_protocol
+from src.custom_protocol import protocol
+from src.json_protocol import protocol as json_protocol
 
 class ProtocolComparisonTests(unittest.TestCase):
     """Test cases comparing custom and JSON protocols"""
