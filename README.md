@@ -55,3 +55,8 @@ Testing the JSON protocol:
 ```bash
 ./src/json_protocol/tests/run_tests.sh
 ```
+
+Compare the test custom protocol and JSON protocol in terms of size and space:
+```bash
+python src/compare_protocols.py
+```
