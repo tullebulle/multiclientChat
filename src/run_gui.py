@@ -28,7 +28,7 @@ def main():
     
     try:
         if args.protocol == "custom":
-            client = ChatGUI()
+            client = ChatGUI(args.host)
         else:
             client = JSONChatGUIClient(args.host)
         client.run()

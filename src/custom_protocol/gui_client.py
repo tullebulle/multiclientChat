@@ -10,10 +10,11 @@ import logging
 from datetime import datetime
 from src.custom_protocol import protocol
 from .client import CustomChatClient
+import argparse
 
 class ChatGUI:
-    def __init__(self):
-        self.client = CustomChatClient(port=9999)
+    def __init__(self, host="localhost"):
+        self.client = CustomChatClient(host=host, port=9999)
         if not self.client.connect():
             messagebox.showerror("Error", "Could not connect to server!")
             return
@@ -356,7 +357,11 @@ class ChatGUI:
 
 def main():
     """Main entry point"""
-    gui = ChatGUI()
+    parser = argparse.ArgumentParser(description="Chat GUI client")
+    parser.add_argument("--host", default="localhost", help="Server host")
+    args = parser.parse_args()
+    
+    gui = ChatGUI(host=args.host)
     gui.run()
 
 if __name__ == "__main__":
