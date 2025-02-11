@@ -9,6 +9,12 @@ import logging
 import signal
 import sys
 import threading
+import os
+# Add parent directory to Python path to handle imports when run from different locations
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 from src.json_protocol.server import JSONChatServer
 from src.custom_protocol.server import CustomChatServer
 

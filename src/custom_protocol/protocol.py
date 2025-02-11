@@ -57,7 +57,7 @@ def decode_message(data: bytes) -> Tuple[Command, bytes]:
         raise ValueError("Message too short")
         
     version, command_val, length = struct.unpack('!BBH', data[:4])
-    if version != PROTOCOL_VERSION:
+    if version != PROTOCOL_VERSION: # Checking if the version is supported
         raise ValueError(f"Unsupported protocol version: {version}")
     
     try:
