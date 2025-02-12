@@ -7,7 +7,7 @@ Server implementation using the custom binary protocol.
 import socketserver
 import logging
 from src.common.server_base import ThreadedTCPServer
-from . import protocol
+from . import custom_protocol
 import struct
 from datetime import datetime
 import fnmatch
@@ -36,13 +36,13 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                 # Decode and handle the message
                 try:
                     logging.debug(f"Received raw data: {data}")
-                    command, payload = protocol.decode_message(data)
+                    command, payload = custom_protocol.decode_message(data)
                     logging.debug(f"Decoded command: {command}, payload: {payload}")
                     self.handle_message(command, payload)
                 except Exception as e:
                     logging.error(f"Failed to handle message: {e}", exc_info=True)
                     error_msg = str(e).encode('utf-8')
-                    self.send_response(protocol.Command.ERROR, error_msg)
+                    self.send_response(custom_protocol.Command.ERROR, error_msg)
                     
             except Exception as e:
                 logging.error(f"Error handling client: {e}", exc_info=True)
@@ -50,21 +50,21 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                 
         logging.info(f"Custom protocol client connection closed from {self.client_address}")
     
-    def handle_message(self, command: protocol.Command, payload: bytes):
+    def handle_message(self, command: custom_protocol.Command, payload: bytes):
         """Handle a decoded message"""
         try:
             logging.debug(f"Handling command: {command} with payload: {payload}")
             
             if not self.current_user and command not in [
-                protocol.Command.AUTH,
-                protocol.Command.CREATE_ACCOUNT,
-                protocol.Command.ERROR
+                custom_protocol.Command.AUTH,
+                custom_protocol.Command.CREATE_ACCOUNT,
+                custom_protocol.Command.ERROR
             ]:
                 logging.debug("Rejecting unauthenticated command")
                 self.send_error("Not authenticated")
                 return
             
-            if command == protocol.Command.CREATE_ACCOUNT:
+            if command == custom_protocol.Command.CREATE_ACCOUNT:
                 # Format: [username_len:1][username:N][password_len:1][password:M]
                 username_len = payload[0]
                 username = payload[1:username_len+1].decode('utf-8')
@@ -77,7 +77,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                 response = b'\x01' if success else b'\x00'
                 self.send_response(command, response)
                 
-            elif command == protocol.Command.AUTH:
+            elif command == custom_protocol.Command.AUTH:
                 # Format: [username_len:1][username:N][password_len:1][password:M]
                 username_len = payload[0]
                 username = payload[1:username_len+1].decode('utf-8')
@@ -96,7 +96,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                 response = b'\x01' if success else b'\x00'
                 self.send_response(command, response)
                 
-            elif command == protocol.Command.LIST_ACCOUNTS:
+            elif command == custom_protocol.Command.LIST_ACCOUNTS:
                 try:
                     # Format: [pattern_len:1][pattern:N]
                     pattern_len = payload[0]
@@ -125,7 +125,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                     logging.error(f"Error listing accounts: {e}")
                     self.send_error(str(e))
                 
-            elif command == protocol.Command.SEND_MESSAGE:
+            elif command == custom_protocol.Command.SEND_MESSAGE:
                 try:
                     # Format: [recipient_len:1][recipient:N][content_len:2][content:M]
                     recipient_len = payload[0]
@@ -155,7 +155,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                     logging.error(f"Error sending message: {e}")
                     self.send_error(str(e))
                     
-            elif command == protocol.Command.GET_MESSAGES:
+            elif command == custom_protocol.Command.GET_MESSAGES:
                 try:
                     # Format: [include_read:1]
                     if len(payload) != 1:
@@ -194,7 +194,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                 except ValueError as e:
                     self.send_error(str(e))
                     
-            elif command == protocol.Command.MARK_READ:
+            elif command == custom_protocol.Command.MARK_READ:
                 try:
                     # Format: [count:2][id1:4][id2:4]...
                     if len(payload) < 2:
@@ -221,7 +221,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                 except ValueError as e:
                     self.send_error(str(e))
                     
-            elif command == protocol.Command.DELETE_MESSAGES:
+            elif command == custom_protocol.Command.DELETE_MESSAGES:
                 try:
                     # Format: [count:2][id1:4][id2:4]...
                     if len(payload) < 2:
@@ -256,7 +256,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                     logging.error(f"Error in delete_messages: {e}")
                     self.send_error(str(e))
             
-            elif command == protocol.Command.DELETE_ACCOUNT:
+            elif command == custom_protocol.Command.DELETE_ACCOUNT:
                 try:
                     # Format: [username_len:1][username:N][password_len:1][password:M]
                     username_len = payload[0]
@@ -277,7 +277,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                     logging.error(f"Error deleting account: {e}")
                     self.send_error(str(e))
             
-            elif command == protocol.Command.GET_UNREAD_COUNT:
+            elif command == custom_protocol.Command.GET_UNREAD_COUNT:
                 try:
                     if not self.current_user:
                         raise ValueError("Not authenticated")
@@ -304,10 +304,10 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
             logging.error(f"Error handling message: {e}")
             self.send_error(str(e))
     
-    def send_response(self, command: protocol.Command, payload: bytes):
+    def send_response(self, command: custom_protocol.Command, payload: bytes):
         """Send a response to the client"""
         try:
-            message = protocol.encode_message(command, payload)
+            message = custom_protocol.encode_message(command, payload)
             self.request.sendall(message)
         except Exception as e:
             logging.error(f"Error sending response: {e}")
@@ -316,7 +316,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
         """Send an error response to the client"""
         try:
             error_msg = error_message.encode('utf-8')
-            self.send_response(protocol.Command.ERROR, error_msg)
+            self.send_response(custom_protocol.Command.ERROR, error_msg)
         except Exception as e:
             logging.error(f"Error sending error response: {e}")
 

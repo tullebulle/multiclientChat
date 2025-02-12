@@ -1,5 +1,5 @@
 """
-JSON Protocol GUI Client
+GUI Client for Custom Protocol Chat
 
 A graphical interface using tkinter for the chat client.
 """
@@ -8,22 +8,18 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import logging
 from datetime import datetime
-from . import json_protocol
-from .client import JSONChatClient
+from .client import ChatClient
+import argparse
+from commands import Command
 
-# Set up logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+class ChatGUI:
+    def __init__(self, host="localhost", port=9999, protocol = "custom'"):
+        self.client = ChatClient(host=host, port=port, protocol=protocol)
 
-class JSONChatGUIClient:
-    def __init__(self, host='localhost', port=9998):
-        self.client = JSONChatClient(host, port)
         if not self.client.connect():
             messagebox.showerror("Error", "Could not connect to server!")
             return
-            
+        
         # Main window setup
         self.root = tk.Tk()
         self.root.title("Chat Application")
@@ -33,10 +29,8 @@ class JSONChatGUIClient:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(expand=True, fill='both', padx=5, pady=5)
         
-        # Initialize message tracking
-        self.message_list = None
-        self.message_ids = {}
-        
+        # TODO: Initialize message tracking
+
         # Create tabs
         self.login_frame = self.create_login_tab()
         self.chat_frame = self.create_chat_tab()
@@ -44,56 +38,60 @@ class JSONChatGUIClient:
         # Initially disable chat tab
         self.notebook.tab(1, state='disabled')
         
+        # Setup logging
+        logging.basicConfig(level=logging.DEBUG)
+        
     def create_login_tab(self):
         """Create the login/registration tab"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="Login")
+        self.notebook.add(frame, text='Login')
         
         # Login section
         login_frame = ttk.LabelFrame(frame, text="Login", padding=10)
         login_frame.pack(fill='x', padx=10, pady=5)
         
-        ttk.Label(login_frame, text="Username:").grid(row=0, column=0, sticky='e', padx=5)
+        ttk.Label(login_frame, text="Username:").grid(row=0, column=0, padx=5, pady=5)
         self.login_username = ttk.Entry(login_frame)
-        self.login_username.grid(row=0, column=1, sticky='ew', padx=5)
+        self.login_username.grid(row=0, column=1, padx=5, pady=5)
         
-        ttk.Label(login_frame, text="Password:").grid(row=1, column=0, sticky='e', padx=5)
-        self.login_password = ttk.Entry(login_frame, show='*')
-        self.login_password.grid(row=1, column=1, sticky='ew', padx=5)
+        ttk.Label(login_frame, text="Password:").grid(row=1, column=0, padx=5, pady=5)
+        self.login_password = ttk.Entry(login_frame, show="*")
+        self.login_password.grid(row=1, column=1, padx=5, pady=5)
         
         ttk.Button(login_frame, text="Login", command=self.handle_login).grid(
             row=2, column=0, columnspan=2, pady=10)
-            
+        
         # Registration section
-        reg_frame = ttk.LabelFrame(frame, text="Register", padding=10)
+        reg_frame = ttk.LabelFrame(frame, text="Create Account", padding=10)
         reg_frame.pack(fill='x', padx=10, pady=5)
         
-        ttk.Label(reg_frame, text="Username:").grid(row=0, column=0, sticky='e', padx=5)
+        ttk.Label(reg_frame, text="Username:").grid(row=0, column=0, padx=5, pady=5)
         self.reg_username = ttk.Entry(reg_frame)
-        self.reg_username.grid(row=0, column=1, sticky='ew', padx=5)
+        self.reg_username.grid(row=0, column=1, padx=5, pady=5)
         
-        ttk.Label(reg_frame, text="Password:").grid(row=1, column=0, sticky='e', padx=5)
-        self.reg_password = ttk.Entry(reg_frame, show='*')
-        self.reg_password.grid(row=1, column=1, sticky='ew', padx=5)
+        ttk.Label(reg_frame, text="Password:").grid(row=1, column=0, padx=5, pady=5)
+        self.reg_password = ttk.Entry(reg_frame, show="*")
+        self.reg_password.grid(row=1, column=1, padx=5, pady=5)
         
-        ttk.Button(reg_frame, text="Register", command=self.handle_register).grid(
+        ttk.Button(reg_frame, text="Create Account", command=self.handle_register).grid(
             row=2, column=0, columnspan=2, pady=10)
-            
+        
         # Delete Account section
         delete_frame = ttk.LabelFrame(frame, text="Delete Account", padding=10)
         delete_frame.pack(fill='x', padx=10, pady=5)
         
-        ttk.Label(delete_frame, text="Username:").grid(row=0, column=0, sticky='e', padx=5)
+        ttk.Label(delete_frame, text="Username:").grid(row=0, column=0, padx=5, pady=5)
         self.delete_username = ttk.Entry(delete_frame)
-        self.delete_username.grid(row=0, column=1, sticky='ew', padx=5)
+        self.delete_username.grid(row=0, column=1, padx=5, pady=5)
         
-        ttk.Label(delete_frame, text="Password:").grid(row=1, column=0, sticky='e', padx=5)
-        self.delete_password = ttk.Entry(delete_frame, show='*')
-        self.delete_password.grid(row=1, column=1, sticky='ew', padx=5)
+        ttk.Label(delete_frame, text="Password:").grid(row=1, column=0, padx=5, pady=5)
+        self.delete_password = ttk.Entry(delete_frame, show="*")
+        self.delete_password.grid(row=1, column=1, padx=5, pady=5)
         
-        ttk.Button(delete_frame, text="Delete Account", command=self.handle_delete_account).grid(
-            row=2, column=0, columnspan=2, pady=10)
-            
+        ttk.Button(delete_frame, text="Delete Account", 
+                   command=self.handle_delete_account,
+                   style='Danger.TButton').grid(row=2, column=0, columnspan=2, pady=10)
+        
         return frame
         
     def create_chat_tab(self):
@@ -101,13 +99,22 @@ class JSONChatGUIClient:
         frame = ttk.Frame(self.notebook)
         self.notebook.add(frame, text='Chat')
         
-        # Top frame for user info and refresh
+        # Top frame for user info, refresh, and message limit
         top_frame = ttk.Frame(frame)
         top_frame.pack(fill='x', padx=5, pady=5)
         
         # User info and refresh button side by side
         self.login_label = ttk.Label(top_frame, text="Not logged in", font=('TkDefaultFont', 10, 'bold'))
         self.login_label.pack(side='left', anchor='w')
+        
+        # Add message limit control
+        limit_frame = ttk.Frame(top_frame)
+        limit_frame.pack(side='right', padx=5)
+        
+        ttk.Label(limit_frame, text="Messages to show:").pack(side='left', padx=2)
+        self.message_limit = ttk.Spinbox(limit_frame, from_=1, to=100, width=5)
+        self.message_limit.set(10)  # Default value
+        self.message_limit.pack(side='left', padx=2)
         
         ttk.Button(top_frame, text="↻ Refresh Messages", 
                    command=self.refresh_messages).pack(side='right', padx=5)
@@ -150,9 +157,20 @@ class JSONChatGUIClient:
         self.message_list.heading('From', text='From')
         self.message_list.heading('Message', text='Message')
         
-        self.message_list.column('Time', width=70, anchor='w')
-        self.message_list.column('From', width=100, anchor='w')
-        self.message_list.column('Message', width=300, anchor='w')
+        # Bind double-click event to show full message
+        self.message_list.bind('<Double-1>', self.show_full_message)
+        
+        # Set column widths and stretch behavior
+        self.message_list.column('Time', width=70, minwidth=70, stretch=False)
+        self.message_list.column('From', width=100, minwidth=100, stretch=False)
+        self.message_list.column('Message', width=300, minwidth=200, stretch=True)
+        
+        # Add binding for dynamic message wrapping
+        def on_treeview_resize(event):
+            message_col_width = self.message_list.winfo_width() - 170  # Subtract width of other columns
+            self.message_list.column('Message', width=max(300, message_col_width))
+        
+        self.message_list.bind('<Configure>', on_treeview_resize)
         
         # Configure tag styles for read/unread
         self.message_list.tag_configure('unread', font=('TkDefaultFont', 10, 'bold'))
@@ -196,12 +214,12 @@ class JSONChatGUIClient:
         if not username or not password:
             messagebox.showerror("Error", "Please enter both username and password")
             return
-            
-        response = self.client.send_command(json_protocol.Command.AUTH, {
+        
+        response = self.client.send_command(Command.AUTH, {
             "username": username,
             "password": password
         })
-        
+            
         if response and response[1].get('status') == 'success':
             messagebox.showinfo("Success", "Logged in successfully!")
             self.client.current_user = username
@@ -222,12 +240,12 @@ class JSONChatGUIClient:
         if not username or not password:
             messagebox.showerror("Error", "Please enter both username and password")
             return
-            
-        response = self.client.send_command(json_protocol.Command.CREATE_ACCOUNT, {
+        
+        response = self.client.send_command(Command.CREATE_ACCOUNT, {
             'username': username,
             'password': password
         })
-        
+            
         if response and response[1].get('status') == 'success':
             messagebox.showinfo("Success", "Account created successfully!")
             # Clear registration fields
@@ -248,9 +266,9 @@ class JSONChatGUIClient:
         if not username or not password:
             messagebox.showerror("Error", "Please enter both username and password")
             return
-            
+        
         # Always check for unread messages
-        response = self.client.send_command(json_protocol.Command.GET_MESSAGES, {
+        response = self.client.send_command(Command.GET_MESSAGES, {
             'include_read': False,  # Only get unread messages
             'username': username  # Add username to get messages for any account
         })
@@ -277,7 +295,7 @@ class JSONChatGUIClient:
                 return
         
         # Try to delete account
-        response = self.client.send_command(json_protocol.Command.DELETE_ACCOUNT, {
+        response = self.client.send_command(Command.DELETE_ACCOUNT, {
             'username': username,
             'password': password
         })
@@ -295,7 +313,7 @@ class JSONChatGUIClient:
                 self.login_label.config(text="Not logged in")
         else:
             messagebox.showerror("Error", "Failed to delete account. Please check your credentials.")
-            
+
     def perform_search(self):
         """Handle search button click"""
         search_text = self.search_entry.get().strip()
@@ -303,72 +321,122 @@ class JSONChatGUIClient:
         
         self.user_listbox.delete(0, tk.END)  # Always clear first
         
-        response = self.client.send_command(json_protocol.Command.LIST_ACCOUNTS, {
+        response = self.client.send_command(Command.LIST_ACCOUNTS, {
             "pattern": pattern
         })
+        
+        # TODO: issue: here it loads all users, not just a fraction
+        if response and response[1].get('status') == 'success':
+            accounts = response[1].get('accounts', [])
+            for account in sorted(accounts):
+                if account != self.client.current_user:  # Don't show current user
+                    self.user_listbox.insert(tk.END, account)
             
+                
     def send_message(self):
         """Send a message to selected user"""
         if not self.user_listbox.curselection():
             messagebox.showwarning("Warning", "Please select a recipient")
             return
-            
+        
         recipient = self.user_listbox.get(self.user_listbox.curselection())
         content = self.message_input.get().strip()
         
         if not content:
             return
-            
-        if self.client.send_message(recipient, content):
+        
+        response = self.client.send_command(Command.SEND_MESSAGE, {
+            "recipient": recipient,
+            "content": content
+        })
+        
+        if response and response[1].get('status') == 'success':
+            # TODO: response[1].get("message_id")
             self.message_input.delete(0, tk.END)
             self.refresh_messages()  # Refresh after sending
         else:
             messagebox.showerror("Error", "Failed to send message")
-            
+        
     def refresh_messages(self):
         """Manually refresh messages"""
         if not self.client.current_user:
             return
-            
+        
         try:
-            response = self.client.send_command(json_protocol.Command.GET_MESSAGES, {
+            response = self.client.send_command(Command.GET_MESSAGES, {
                 "include_read": True
             })
-            
+
             if response and response[1].get('status') == 'success':
-                # Clear existing messages
+                 # Clear existing messages
                 for item in self.message_list.get_children():
                     self.message_list.delete(item)
                 self.message_ids.clear()
                 
-                # Add messages to treeview
                 messages = response[1].get('messages', [])
-                for msg in sorted(messages, key=lambda x: x['timestamp']):
-                    timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%H:%M:%S')
+
+                # Sort messages by timestamp and limit the number shown
+                limit = int(self.message_limit.get())
+                sorted_messages = sorted(messages, key=lambda x: x['timestamp'])
+                recent_messages = sorted_messages[-limit:]
+                # TODO: issue: here it loads all messages, not just a fraction
+                
+                # Calculate wrap width based on Message column width
+                message_col_width = self.message_list.column('Message', 'width')
+                chars_per_line = message_col_width // 7  # Approximate characters that fit per line
+                
+                # Add messages to treeview with dynamic word wrapping
+                for msg in recent_messages:
+                    timestamp = msg['timestamp'].strftime('%H:%M:%S')
+                    content = msg['content']
+                    
+                    # Word wrap the content
+                    words = content.split()
+                    lines = []
+                    current_line = []
+                    current_length = 0
+                    
+                    for word in words:
+                        word_length = len(word)
+                        if current_length + word_length + 1 <= chars_per_line:
+                            current_line.append(word)
+                            current_length += word_length + 1
+                        else:
+                            if current_line:
+                                lines.append(' '.join(current_line))
+                            current_line = [word]
+                            current_length = word_length
+                    
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                    
+                    wrapped_content = '\n'.join(lines)
+                    
                     item_id = self.message_list.insert('', 'end',
-                        values=(timestamp, msg['sender'], msg['content']),
+                        values=(timestamp, msg['sender'], wrapped_content),
                         tags=('unread' if not msg['is_read'] else 'read',))
                     self.message_ids[item_id] = msg['id']
             else:
                 error_msg = response[1].get('message', "Unknown error")
                 messagebox.showerror("Error", f"Failed to refresh messages: {error_msg}")
-                
+                     
+
         except Exception as e:
             logging.error(f"Error refreshing messages: {e}")
             messagebox.showerror("Error", "Failed to refresh messages")
-            
+        
     def mark_selected_read(self):
         """Mark selected messages as read"""
         selected_items = self.message_list.selection()
         if not selected_items:
             messagebox.showinfo("Info", "Please select messages to mark as read")
             return
-            
+        
         try:
             # Get message IDs for selected items
             message_ids = [self.message_ids[item] for item in selected_items]
             
-            response = self.client.send_command(json_protocol.Command.MARK_READ, {
+            response = self.client.send_command(Command.MARK_READ, {
                 "message_ids": message_ids
             })
             
@@ -380,18 +448,19 @@ class JSONChatGUIClient:
         except Exception as e:
             logging.error(f"Error marking messages as read: {e}")
             messagebox.showerror("Error", f"Failed to mark messages as read: {str(e)}")
-            
+          
     def delete_selected_messages(self):
         """Delete selected messages"""
         selected_items = self.message_list.selection()
         if not selected_items:
             messagebox.showinfo("Info", "Please select messages to delete")
             return
-            
+        
         if messagebox.askyesno("Confirm Delete", 
-                             f"Delete {len(selected_items)} selected messages?"):
+                              f"Delete {len(selected_items)} selected messages?"):
             message_ids = [self.message_ids[item] for item in selected_items]
-            response = self.client.send_command(json_protocol.Command.DELETE_MESSAGES, {
+            
+            response = self.client.send_command(Command.DELETE_MESSAGES, {
                 "message_ids": message_ids
             })
             
@@ -400,14 +469,78 @@ class JSONChatGUIClient:
                 self.refresh_messages()
             else:
                 messagebox.showerror("Error", "Failed to delete messages")
+              
+    def show_full_message(self, event):
+        """Show the full message in a popup window when double-clicked"""
+        selected_items = self.message_list.selection()
+        if not selected_items:
+            return
+        
+        # Get the message content
+        item = selected_items[0]  # Get first selected item
+        values = self.message_list.item(item)['values']
+        if not values:
+            return
+        
+        time, sender, content = values
+
+        # Marking message as read
+        # TODO: error messages here?
+        try:
+            response = self.client.send_command(Command.MARK_READ, {
+                "message_ids": [self.message_ids[item]]
+            })
+            
+            if response and response[1].get('status') == 'success':
+                self.refresh_messages()  # Refresh to update the display
+            else:
+                messagebox.showerror("Error", "Failed to mark messages as read")
                 
+        except Exception as e:
+            logging.error(f"Error marking messages as read: {e}")
+            messagebox.showerror("Error", f"Failed to mark messages as read: {str(e)}")
+          
+
+        # Create popup window
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Message from {sender} at {time}")
+        popup.geometry("400x300")
+        
+        # Add text widget with scrollbar
+        text_frame = ttk.Frame(popup)
+        text_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        text_widget = tk.Text(text_frame, wrap='word', padx=5, pady=5)
+        text_widget.pack(side='left', fill='both', expand=True)
+        
+        scrollbar = ttk.Scrollbar(text_frame, orient='vertical', command=text_widget.yview)
+        scrollbar.pack(side='right', fill='y')
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        # Insert message content
+        text_widget.insert('1.0', content)
+        text_widget.configure(state='disabled')  # Make read-only
+        
+        # Add close button
+        ttk.Button(popup, text="Close", command=popup.destroy).pack(pady=5)
+        
+        # Make the popup modal
+        popup.transient(self.root)
+        popup.grab_set()
+        self.root.wait_window(popup)
+        
     def run(self):
         """Start the GUI"""
         self.root.mainloop()
 
 def main():
     """Main entry point"""
-    gui = JSONChatGUIClient()
+    #TODO: Is this ever the main entry point??
+    # parser = argparse.ArgumentParser(description="Chat GUI client")
+    # parser.add_argument("--host", default="localhost", help="Server host")
+    # args = parser.parse_args()
+    
+    gui = ChatGUI(host=args.host)
     gui.run()
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ import logging
 import struct
 from datetime import datetime
 from src.custom_protocol import custom_protocol
+from src.json_protocol import json_protocol
+from commands import Command
 
 # Set up logging at the start of the file
 logging.basicConfig(
@@ -19,13 +21,18 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-class CustomChatClient:
+class ChatClient:
     """Interactive chat client using custom binary protocol"""
     
-    def __init__(self, host='localhost', port=9999):
+    def __init__(self, host='localhost', port=9999, protocol="custom"):
         """Initialize the chat client"""
         self.host = host
         self.port = port
+        if protocol=="custom":
+            self.protocol = custom_protocol
+        else:
+            self.protocol = json_protocol
+
         self.sock = None
         self.current_user = None
         logging.debug(f"Initialized client for {host}:{port}")
@@ -47,11 +54,11 @@ class CustomChatClient:
             logging.error(f"Connection failed: {e}")
             return False
             
-    def disconnect(self):
-        """Close the connection"""
-        self.sock.close()
+    # def disconnect(self):
+    #     """Close the connection"""
+    #     self.sock.close()
             
-    def send_command(self, command: custom_protocol.Command, payload: bytes) -> tuple:
+    def send_command(self, command: Command, payload: dict) -> tuple:
         """Send a command to the server and get the response"""
         if not self.sock:
             logging.error("Not connected to server")
@@ -59,16 +66,21 @@ class CustomChatClient:
             
         try:
             # Send command
-            message = custom_protocol.encode_message(command, payload)
-            logging.debug(f"Sending command {command.name} with payload length {len(payload)}")
-            logging.debug(f"Raw payload bytes: {[b for b in payload]}")
+            message = self.protocol.encode_message(command, payload)
+            # TODO: logging.debug(f"Sending command {command.name} with payload length {len(payload)}")
+            # TODO: logging.debug(f"Raw payload bytes: {[b for b in payload]}")
             self.sock.sendall(message)
             
+            # TODO: Can we be sure the response is to the right request?
             # Get response
             response = self.sock.recv(1024)
-            cmd, payload = custom_protocol.decode_message(response)
-            logging.debug(f"Received response: command={cmd.name}, payload={[b for b in payload]}")
-            return cmd, payload
+            # TODO: Change load max based on protocol
+            if not response:
+                raise ConnectionError("Server closed connection")
+
+            cmd, message = self.protocol.decode_message(response)
+            # TODO: logging.debug(f"Received response: command={cmd.name}, payload={[b for b in payload]}")
+            return cmd, message
         except Exception as e:
             logging.error(f"Error sending command: {e}")
             return None
@@ -89,7 +101,7 @@ class CustomChatClient:
         logging.debug(f"Password length: {len(password)}")
         logging.debug(f"Password hash: {hash(password)}")
         
-        response = self.send_command(custom_protocol.Command.CREATE_ACCOUNT, payload)
+        response = self.send_command(Command.CREATE_ACCOUNT, payload)
         if response:
             _, result = response
             logging.debug(f"Create account response: {[b for b in result]}")
@@ -116,7 +128,7 @@ class CustomChatClient:
         logging.debug(f"Password length: {len(password)}")
         logging.debug(f"Password hash: {hash(password)}")
         
-        response = self.send_command(custom_protocol.Command.AUTH, payload)
+        response = self.send_command(protocol.Command.AUTH, payload)
         if response:
             _, result = response
             logging.debug(f"Auth response: {[b for b in result]}")
@@ -137,11 +149,11 @@ class CustomChatClient:
         payload = bytes([len(pattern)]) + pattern.encode()
         
         logging.debug(f"Listing accounts with pattern: '{pattern}'")
-        response = self.send_command(custom_protocol.Command.LIST_ACCOUNTS, payload)
+        response = self.send_command(protocol.Command.LIST_ACCOUNTS, payload)
         logging.debug(f"List accounts response: {response}")
         if response:
             cmd, result = response
-            if cmd == custom_protocol.Command.ERROR:
+            if cmd == protocol.Command.ERROR:
                 print(f"Error listing accounts: {result.decode()}")
                 return None
             
@@ -186,11 +198,11 @@ class CustomChatClient:
         payload += struct.pack('!H', len(content)) + content.encode()
         
         logging.debug(f"Sending message to {recipient}: {content}")
-        response = self.send_command(custom_protocol.Command.SEND_MESSAGE, payload)
+        response = self.send_command(protocol.Command.SEND_MESSAGE, payload)
         
         if response:
             cmd, result = response
-            if cmd == custom_protocol.Command.ERROR:
+            if cmd == protocol.Command.ERROR:
                 logging.error(f"Failed to send message: {result.decode()}")
                 return False
             else:
@@ -216,10 +228,10 @@ class CustomChatClient:
         # Format: [include_read:1]
         payload = bytes([int(include_read)])
         
-        response = self.send_command(custom_protocol.Command.GET_MESSAGES, payload)
+        response = self.send_command(protocol.Command.GET_MESSAGES, payload)
         if response:
             cmd, result = response
-            if cmd == custom_protocol.Command.ERROR:
+            if cmd == protocol.Command.ERROR:
                 logging.error(f"Failed to get messages: {result.decode()}")
                 return []
             
@@ -284,10 +296,10 @@ class CustomChatClient:
         for msg_id in message_ids:
             payload += struct.pack('!I', msg_id)
         
-        response = self.send_command(custom_protocol.Command.MARK_READ, payload)
+        response = self.send_command(protocol.Command.MARK_READ, payload)
         if response:
             cmd, result = response
-            if cmd == custom_protocol.Command.ERROR:
+            if cmd == protocol.Command.ERROR:
                 logging.error(f"Failed to mark messages as read: {result.decode()}")
                 return False
             return True
@@ -312,10 +324,10 @@ class CustomChatClient:
         for msg_id in message_ids:
             payload += struct.pack('!I', msg_id)
         
-        response = self.send_command(custom_protocol.Command.DELETE_MESSAGES, payload)
+        response = self.send_command(protocol.Command.DELETE_MESSAGES, payload)
         if response:
             cmd, result = response
-            if cmd == custom_protocol.Command.ERROR:
+            if cmd == protocol.Command.ERROR:
                 logging.error(f"Failed to delete messages: {result.decode()}")
                 return False
             return True
@@ -337,11 +349,11 @@ class CustomChatClient:
         payload += bytes([len(password)]) + password.encode()
         
         logging.debug(f"Attempting to delete account: {username}")
-        response = self.send_command(custom_protocol.Command.DELETE_ACCOUNT, payload)
+        response = self.send_command(protocol.Command.DELETE_ACCOUNT, payload)
         
         if response:
             cmd, result = response
-            if cmd == custom_protocol.Command.ERROR:
+            if cmd == protocol.Command.ERROR:
                 logging.error(f"Failed to delete account: {result.decode()}")
                 return False
             success = result == b'\x01'
@@ -361,64 +373,64 @@ class CustomChatClient:
             logging.error("Not logged in")
             return -1
         
-        response = self.send_command(custom_protocol.Command.GET_UNREAD_COUNT, b'')
+        response = self.send_command(protocol.Command.GET_UNREAD_COUNT, b'')
         if response:
             cmd, result = response
-            if cmd == custom_protocol.Command.ERROR:
+            if cmd == protocol.Command.ERROR:
                 logging.error(f"Failed to get unread count: {result.decode()}")
                 return -1
             return struct.unpack('!H', result)[0]
         return -1
 
-    def main_loop(self):
-        """Main client loop"""
-        commands = {
-            "1": ("Create account", self.create_account),
-            "2": ("Login", self.login),
-            "3": ("List accounts", self.list_accounts),
-            "4": ("Send message", self.send_message),
-            "5": ("Get messages", self.get_messages),
-            "6": ("Mark messages as read", self.mark_read),
-            "7": ("Delete messages", self.delete_messages),
-            "8": ("Delete account", self.delete_account),
-            "9": ("Get unread count", self.get_unread_count),
-            "10": ("Quit", lambda: "quit")
-        }
+    # def main_loop(self):
+    #     """Main client loop"""
+    #     commands = {
+    #         "1": ("Create account", self.create_account),
+    #         "2": ("Login", self.login),
+    #         "3": ("List accounts", self.list_accounts),
+    #         "4": ("Send message", self.send_message),
+    #         "5": ("Get messages", self.get_messages),
+    #         "6": ("Mark messages as read", self.mark_read),
+    #         "7": ("Delete messages", self.delete_messages),
+    #         "8": ("Delete account", self.delete_account),
+    #         "9": ("Get unread count", self.get_unread_count),
+    #         "10": ("Quit", lambda: "quit")
+    #     }
         
-        while True:
-            print("\nAvailable commands:")
-            for key, (name, _) in commands.items():
-                print(f"{key}: {name}")
-            if self.current_user:
-                print(f"\nLogged in as: {self.current_user}")
-            else:
-                print("\nNot logged in")
+    #     while True:
+    #         print("\nAvailable commands:")
+    #         for key, (name, _) in commands.items():
+    #             print(f"{key}: {name}")
+    #         if self.current_user:
+    #             print(f"\nLogged in as: {self.current_user}")
+    #         else:
+    #             print("\nNot logged in")
                 
-            choice = input("\nEnter command number: ").strip()
+    #         choice = input("\nEnter command number: ").strip()
             
-            if choice not in commands:
-                print("Invalid command!")
-                continue
+    #         if choice not in commands:
+    #             print("Invalid command!")
+    #             continue
                 
-            name, func = commands[choice]
-            result = func()
+    #         name, func = commands[choice]
+    #         result = func()
             
-            if result == "quit":
-                break
+    #         if result == "quit":
+    #             break
 
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description="Chat client (Custom Protocol)")
-    parser.add_argument("--host", default="localhost", help="Server host")
-    parser.add_argument("--port", type=int, default=9999, help="Server port")
-    args = parser.parse_args()
+# def main():
+#     """Main entry point"""
+#     parser = argparse.ArgumentParser(description="Chat client (Custom Protocol)")
+#     parser.add_argument("--host", default="localhost", help="Server host")
+#     parser.add_argument("--port", type=int, default=9999, help="Server port")
+#     args = parser.parse_args()
     
-    client = CustomChatClient(args.host, args.port)
-    if client.connect():
-        try:
-            client.main_loop()
-        finally:
-            client.disconnect()
+#     client = CustomChatClient(args.host, args.port)
+#     if client.connect():
+#         try:
+#             client.main_loop()
+#         finally:
+#             client.disconnect()
 
-if __name__ == "__main__":
-    main() 
+# if __name__ == "__main__":
+#     main() 

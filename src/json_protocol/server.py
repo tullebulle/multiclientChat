@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 import fnmatch
 from ..common.server_base import ThreadedTCPServer
-from . import protocol
+from . import json_protocol
 
 # Set up logging with simpler format
 logging.basicConfig(
@@ -33,11 +33,11 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                 if not data:
                     break
                     
-                command, payload = protocol.decode_message(data)
+                command, payload = json_protocol.decode_message(data)
                 logging.debug(f"Received {command} command")
                 
                 # Commands that don't require authentication
-                if command == protocol.Command.CREATE_ACCOUNT:
+                if command == json_protocol.Command.CREATE_ACCOUNT:
                     try:
                         username = payload['username']
                         password = payload['password']
@@ -53,7 +53,7 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                         self.send_error(str(e))
                     continue
                     
-                elif command == protocol.Command.AUTH:
+                elif command == json_protocol.Command.AUTH:
                     try:
                         username = payload['username']
                         password = payload.get('password') or payload.get('password_hash')
@@ -80,10 +80,10 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                 
         logging.debug("Client connection closed")
     
-    def handle_message(self, command: protocol.Command, payload: dict):
+    def handle_message(self, command: json_protocol.Command, payload: dict):
         """Handle a decoded message"""
         try:
-            if command == protocol.Command.GET_MESSAGES:
+            if command == json_protocol.Command.GET_MESSAGES:
                 try:
                     include_read = payload.get('include_read', True)
                     username = payload.get('username', self.current_user)
@@ -107,7 +107,7 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                     self.send_error(str(e))
                 return
                 
-            elif command == protocol.Command.LIST_ACCOUNTS:
+            elif command == json_protocol.Command.LIST_ACCOUNTS:
                 try:
                     pattern = payload.get('pattern', '*')
                     page = payload.get('page', 1)
@@ -138,7 +138,7 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                     self.send_error(str(e))
                 return
                 
-            elif command == protocol.Command.SEND_MESSAGE:
+            elif command == json_protocol.Command.SEND_MESSAGE:
                 try:
                     recipient = payload['recipient']
                     content = payload['content']
@@ -159,7 +159,7 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                     self.send_error(str(e))
                 return
                 
-            elif command == protocol.Command.MARK_READ:
+            elif command == json_protocol.Command.MARK_READ:
                 try:
                     marked = self.chat_server.mark_messages_read(
                         self.current_user,
@@ -171,7 +171,7 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                     self.send_error(str(e))
                 return
                 
-            elif command == protocol.Command.DELETE_MESSAGES:
+            elif command == json_protocol.Command.DELETE_MESSAGES:
                 try:
                     deleted = self.chat_server.delete_messages(
                         self.current_user,
@@ -183,7 +183,7 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                     self.send_error(str(e))
                 return
                 
-            elif command == protocol.Command.DELETE_ACCOUNT:
+            elif command == json_protocol.Command.DELETE_ACCOUNT:
                 try:
                     success = self.chat_server.delete_account(
                         payload['username'],
@@ -197,7 +197,7 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
                     self.send_error(str(e))
                 return
                 
-            elif command == protocol.Command.GET_UNREAD_COUNT:
+            elif command == json_protocol.Command.GET_UNREAD_COUNT:
                 try:
                     messages = self.chat_server.get_messages(
                         self.current_user,
@@ -220,10 +220,10 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
             logging.error(f"Error handling {command}: {e}")
             self.send_error(str(e))
     
-    def send_response(self, command: protocol.Command, payload: dict):
+    def send_response(self, command: json_protocol.Command, payload: dict):
         """Send a response to the client"""
         try:
-            message = protocol.encode_message(command, payload)
+            message = json_protocol.encode_message(command, payload)
             self.request.sendall(message)
         except Exception as e:
             logging.error(f"Error sending response: {e}")
@@ -232,7 +232,7 @@ class JSONChatRequestHandler(socketserver.BaseRequestHandler):
         """Send an error response to the client"""
         try:
             response = {'status': 'error', 'message': error_message}
-            self.send_response(protocol.Command.ERROR, response)
+            self.send_response(json_protocol.Command.ERROR, response)
         except Exception as e:
             logging.error(f"Error sending error response: {e}")
 

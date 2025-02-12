@@ -11,7 +11,7 @@ import sys
 import logging
 import json
 from typing import Tuple, Dict, Any
-from . import protocol
+from . import json_protocol
 
 class JSONChatClient:
     """Interactive chat client using JSON protocol"""
@@ -50,7 +50,7 @@ class JSONChatClient:
             self.sock = None
             self.current_user = None
             
-    def send_command(self, command: protocol.Command, payload: dict) -> tuple:
+    def send_command(self, command: json_protocol.Command, payload: dict) -> tuple:
         """Send a command to the server and get the response"""
         if not self.sock:
             logging.error("Not connected to server")
@@ -58,7 +58,7 @@ class JSONChatClient:
             
         try:
             # Send command
-            message = protocol.encode_message(command, payload)
+            message = json_protocol.encode_message(command, payload)
             self.sock.sendall(message)
             
             # Get response
@@ -77,7 +77,7 @@ class JSONChatClient:
             
             if "version" not in message:
                 raise ValueError("Missing protocol version")
-            if message["version"] != protocol.PROTOCOL_VERSION:
+            if message["version"] != json_protocol.PROTOCOL_VERSION:
                 raise ValueError(f"Unsupported protocol version: {message['version']}")
             
             if "command" not in message:
@@ -88,9 +88,9 @@ class JSONChatClient:
             
             # Convert Command enum to string name for test compatibility
             command = message["command"]
-            if isinstance(command, protocol.Command):
+            if isinstance(command, json_protocol.Command):
                 command = command.name
-            elif isinstance(command, str) and hasattr(protocol.Command, command):
+            elif isinstance(command, str) and hasattr(json_protocol.Command, command):
                 # Already a string name, leave it as is
                 pass
             else:
@@ -100,70 +100,6 @@ class JSONChatClient:
         
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON format: {e}")
-
-    def create_account(self, username: str, password: str) -> bool:
-        """Create a new account
-        
-        Args:
-            username: The username to create
-            password: The password for the account
-            
-        Returns:
-            bool: True if account was created successfully
-        """
-        payload = {
-            "username": username,
-            "password": password
-        }
-        
-        response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
-        if response:
-            cmd, payload = response
-            return payload.get("status") == "success"
-        return False
-                
-    def login(self, username: str, password: str) -> bool:
-        """Log in to an existing account
-        
-        Args:
-            username: The username to log in as
-            password: The account password
-            
-        Returns:
-            bool: True if login was successful
-        """
-        payload = {
-            "username": username,
-            "password": password
-        }
-        
-        response = self.send_command(protocol.Command.AUTH, payload)
-        if response:
-            cmd, payload = response
-            if payload.get("status") == "success":
-                self.current_user = username
-                return True
-        return False
-                
-    def list_accounts(self, pattern: str = "*") -> list:
-        """List accounts matching a pattern
-        
-        Args:
-            pattern: Search pattern (default: "*" for all accounts)
-            
-        Returns:
-            list: List of matching usernames, or None on error
-        """
-        payload = {
-            "pattern": pattern
-        }
-        
-        response = self.send_command(protocol.Command.LIST_ACCOUNTS, payload)
-        if response:
-            cmd, payload = response
-            if payload.get("status") == "success":
-                return payload.get("accounts", [])
-        return None
 
     def send_message(self, recipient: str, content: str) -> int:
         """Send a message to another user
@@ -180,86 +116,12 @@ class JSONChatClient:
             "content": content
         }
         
-        response = self.send_command(protocol.Command.SEND_MESSAGE, payload)
+        response = self.send_command(json_protocol.Command.SEND_MESSAGE, payload)
         if response:
             cmd, payload = response
             if payload.get("status") == "success":
                 return payload.get("message_id")
         return None
-
-    def get_messages(self, include_read: bool = True) -> list:
-        """Get messages for the current user
-        
-        Args:
-            include_read: Whether to include already read messages
-            
-        Returns:
-            list: List of message dictionaries
-        """
-        payload = {
-            "include_read": include_read
-        }
-        
-        response = self.send_command(protocol.Command.GET_MESSAGES, payload)
-        if response:
-            cmd, payload = response
-            if payload.get("status") == "success":
-                return payload.get("messages", [])
-        return None
-
-    def mark_read(self, message_ids: list) -> int:
-        """Mark messages as read
-        
-        Args:
-            message_ids: List of message IDs to mark as read
-            
-        Returns:
-            int: Number of messages marked as read
-        """
-        payload = {
-            "message_ids": message_ids
-        }
-        
-        response = self.send_command(protocol.Command.MARK_READ, payload)
-        if response:
-            cmd, payload = response
-            if payload.get("status") == "success":
-                return payload.get("marked_count", 0)
-        return 0
-
-    def get_unread_count(self) -> int:
-        """Get number of unread messages
-        
-        Returns:
-            int: Number of unread messages
-        """
-        response = self.send_command(protocol.Command.GET_UNREAD_COUNT, {})
-        if response:
-            cmd, payload = response
-            if payload.get("status") == "success":
-                return payload.get("count", 0)
-        return 0
-
-    def delete_account(self, username: str, password: str) -> bool:
-        """Delete an account
-        
-        Args:
-            username: Username of account to delete
-            password: Password for verification
-            
-        Returns:
-            bool: True if account was deleted successfully
-        """
-        payload = {
-            "username": username,
-            "password": password
-        }
-        
-        response = self.send_command(protocol.Command.DELETE_ACCOUNT, payload)
-        if response:
-            cmd, payload = response
-            return payload.get("status") == "success"
-        return False
 
 def main():
     """Main entry point"""

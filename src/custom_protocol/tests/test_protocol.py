@@ -11,7 +11,7 @@ import threading
 import socket
 from ...common.server_base import ThreadedTCPServer
 from ..server import CustomChatRequestHandler
-from .. import protocol
+from .. import custom_protocol
 from ..client import CustomChatClient
 
 class TestCustomProtocol(unittest.TestCase):
@@ -94,55 +94,55 @@ class TestCustomProtocol(unittest.TestCase):
     def test_account_commands(self):
         """Test encoding/decoding of account-related commands"""
         test_cases = [
-            (protocol.Command.AUTH, b'\x05alice\x05pass1'),
-            (protocol.Command.CREATE_ACCOUNT, b'\x08testuser\x08testpass'),
-            (protocol.Command.LIST_ACCOUNTS, b'\x01*')
+            (custom_protocol.Command.AUTH, b'\x05alice\x05pass1'),
+            (custom_protocol.Command.CREATE_ACCOUNT, b'\x08testuser\x08testpass'),
+            (custom_protocol.Command.LIST_ACCOUNTS, b'\x01*')
         ]
         
         for command, payload in test_cases:
             with self.subTest(command=command):
-                message = protocol.encode_message(command, payload)
+                message = custom_protocol.encode_message(command, payload)
                 # Check protocol version
                 self.assertEqual(message[0], self.PROTOCOL_VERSION)
-                decoded_command, decoded_payload = protocol.decode_message(message)
+                decoded_command, decoded_payload = custom_protocol.decode_message(message)
                 self.assertEqual(decoded_command, command)
                 self.assertEqual(decoded_payload, payload)
 
     def test_message_commands(self):
         """Test encoding/decoding of message-related commands"""
         test_cases = [
-            (protocol.Command.SEND_MESSAGE, b'\x03bob\x00\x0cHello, World!'),
-            (protocol.Command.GET_MESSAGES, b'\x01'),
-            (protocol.Command.MARK_READ, b'\x00\x02\x00\x00\x00\x01\x00\x00\x00\x02'),
-            (protocol.Command.GET_UNREAD_COUNT, b''),
-            (protocol.Command.DELETE_MESSAGES, b'\x00\x01\x00\x00\x00\x01')
+            (custom_protocol.Command.SEND_MESSAGE, b'\x03bob\x00\x0cHello, World!'),
+            (custom_protocol.Command.GET_MESSAGES, b'\x01'),
+            (custom_protocol.Command.MARK_READ, b'\x00\x02\x00\x00\x00\x01\x00\x00\x00\x02'),
+            (custom_protocol.Command.GET_UNREAD_COUNT, b''),
+            (custom_protocol.Command.DELETE_MESSAGES, b'\x00\x01\x00\x00\x00\x01')
         ]
         
         for command, payload in test_cases:
             with self.subTest(command=command):
-                message = protocol.encode_message(command, payload)
+                message = custom_protocol.encode_message(command, payload)
                 # Check protocol version
                 self.assertEqual(message[0], self.PROTOCOL_VERSION)
-                decoded_command, decoded_payload = protocol.decode_message(message)
+                decoded_command, decoded_payload = custom_protocol.decode_message(message)
                 self.assertEqual(decoded_command, command)
                 self.assertEqual(decoded_payload, payload)
 
     def test_message_responses(self):
         """Test message response formats"""
         test_cases = [
-            (protocol.Command.SEND_MESSAGE, b'\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01'),
-            (protocol.Command.GET_MESSAGES, b'\x00\x01\x00\x00\x00\x01\x05alice\x0cHello, World!\x00\x00\x00\x00\x00\x00\x00\x01\x00'),
-            (protocol.Command.MARK_READ, b'\x00\x01'),
-            (protocol.Command.GET_UNREAD_COUNT, b'\x00\x02'),
-            (protocol.Command.DELETE_MESSAGES, b'\x00\x01')
+            (custom_protocol.Command.SEND_MESSAGE, b'\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01'),
+            (custom_protocol.Command.GET_MESSAGES, b'\x00\x01\x00\x00\x00\x01\x05alice\x0cHello, World!\x00\x00\x00\x00\x00\x00\x00\x01\x00'),
+            (custom_protocol.Command.MARK_READ, b'\x00\x01'),
+            (custom_protocol.Command.GET_UNREAD_COUNT, b'\x00\x02'),
+            (custom_protocol.Command.DELETE_MESSAGES, b'\x00\x01')
         ]
         
         for command, payload in test_cases:
             with self.subTest(command=command):
-                message = protocol.encode_message(command, payload)
+                message = custom_protocol.encode_message(command, payload)
                 # Check protocol version
                 self.assertEqual(message[0], self.PROTOCOL_VERSION)
-                decoded_command, decoded_payload = protocol.decode_message(message)
+                decoded_command, decoded_payload = custom_protocol.decode_message(message)
                 self.assertEqual(decoded_command, command)
                 self.assertEqual(decoded_payload, payload)
 
@@ -159,7 +159,7 @@ class TestCustomProtocol(unittest.TestCase):
         for invalid_msg in invalid_cases:
             with self.subTest(msg=invalid_msg):
                 with self.assertRaises(ValueError):
-                    protocol.decode_message(invalid_msg)
+                    custom_protocol.decode_message(invalid_msg)
 
     def test_large_messages(self):
         """Test handling of large messages"""
@@ -171,10 +171,10 @@ class TestCustomProtocol(unittest.TestCase):
         payload = bytes([len(recipient)]) + recipient.encode()
         payload += struct.pack('!H', len(content)) + content.encode()
         
-        message = protocol.encode_message(protocol.Command.SEND_MESSAGE, payload)
-        decoded_command, decoded_payload = protocol.decode_message(message)
+        message = custom_protocol.encode_message(custom_protocol.Command.SEND_MESSAGE, payload)
+        decoded_command, decoded_payload = custom_protocol.decode_message(message)
         
-        self.assertEqual(decoded_command, protocol.Command.SEND_MESSAGE)
+        self.assertEqual(decoded_command, custom_protocol.Command.SEND_MESSAGE)
         self.assertEqual(decoded_payload, payload)
 
     def test_send_message(self):
@@ -231,14 +231,14 @@ class TestCustomProtocol(unittest.TestCase):
     def test_invalid_version(self):
         """Test handling of invalid protocol version"""
         # Create a message with invalid version (current version + 1)
-        command = protocol.Command.AUTH
+        command = custom_protocol.Command.AUTH
         payload = b'\x05alice\x05pass1'
-        message = protocol.encode_message(command, payload)
+        message = custom_protocol.encode_message(command, payload)
         # Modify the version byte to an invalid version
         invalid_message = bytes([self.PROTOCOL_VERSION + 1]) + message[1:]
         
         with self.assertRaises(ValueError) as cm:
-            protocol.decode_message(invalid_message)
+            custom_protocol.decode_message(invalid_message)
         self.assertIn("Unsupported protocol version", str(cm.exception))
 
 if __name__ == '__main__':

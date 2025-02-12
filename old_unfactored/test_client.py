@@ -5,7 +5,7 @@ Command-line test client for the custom protocol chat server.
 import socket
 import struct
 import logging
-from src.custom_protocol import protocol
+from src.custom_protocol import custom_protocol
 import sys
 
 logging.basicConfig(level=logging.DEBUG)
@@ -18,7 +18,7 @@ class ChatClient:
     
     def send_command(self, command, payload):
         """Send a command and get response"""
-        message = protocol.encode_message(command, payload)
+        message = custom_protocol.encode_message(command, payload)
         self.sock.sendall(message)
         
         # Read response header
@@ -27,7 +27,7 @@ class ChatClient:
             raise RuntimeError("Failed to receive response header")
             
         cmd_val, length = struct.unpack('!BH', header)
-        cmd = protocol.Command(cmd_val)
+        cmd = custom_protocol.Command(cmd_val)
         
         # Read payload
         response = b''
@@ -43,7 +43,7 @@ class ChatClient:
         """Login to the server"""
         payload = bytes([len(username)]) + username.encode()
         payload += bytes([len(password)]) + password.encode()
-        cmd, response = self.send_command(protocol.Command.AUTH, payload)
+        cmd, response = self.send_command(custom_protocol.Command.AUTH, payload)
         success = response == b'\x01'
         if success:
             self.current_user = username
@@ -53,13 +53,13 @@ class ChatClient:
         """Create a new account"""
         payload = bytes([len(username)]) + username.encode()
         payload += bytes([len(password)]) + password.encode()
-        cmd, response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
+        cmd, response = self.send_command(custom_protocol.Command.CREATE_ACCOUNT, payload)
         return response == b'\x01'
     
     def list_accounts(self, pattern="*"):
         """List accounts matching pattern"""
         payload = bytes([len(pattern)]) + pattern.encode()
-        cmd, response = self.send_command(protocol.Command.LIST_ACCOUNTS, payload)
+        cmd, response = self.send_command(custom_protocol.Command.LIST_ACCOUNTS, payload)
         count = response[0]
         pos = 1
         accounts = []
@@ -77,7 +77,7 @@ class ChatClient:
             
         payload = bytes([len(recipient)]) + recipient.encode()
         payload += struct.pack('!H', len(content)) + content.encode()
-        cmd, response = self.send_command(protocol.Command.SEND_MESSAGE, payload)
+        cmd, response = self.send_command(custom_protocol.Command.SEND_MESSAGE, payload)
         message_id = struct.unpack('!I', response[:4])[0]
         return message_id
     
@@ -87,7 +87,7 @@ class ChatClient:
             raise RuntimeError("Not logged in")
             
         payload = bytes([int(include_read)])
-        cmd, response = self.send_command(protocol.Command.GET_MESSAGES, payload)
+        cmd, response = self.send_command(custom_protocol.Command.GET_MESSAGES, payload)
         
         count = struct.unpack('!H', response[:2])[0]
         pos = 2
@@ -132,7 +132,7 @@ class ChatClient:
         for msg_id in message_ids:
             payload += struct.pack('!I', msg_id)
         
-        cmd, response = self.send_command(protocol.Command.MARK_READ, payload)
+        cmd, response = self.send_command(custom_protocol.Command.MARK_READ, payload)
         return struct.unpack('!H', response)[0]
     
     def delete_messages(self, message_ids):
@@ -144,7 +144,7 @@ class ChatClient:
         for msg_id in message_ids:
             payload += struct.pack('!I', msg_id)
         
-        cmd, response = self.send_command(protocol.Command.DELETE_MESSAGES, payload)
+        cmd, response = self.send_command(custom_protocol.Command.DELETE_MESSAGES, payload)
         return struct.unpack('!H', response)[0]
     
     def close(self):

@@ -8,8 +8,8 @@ in terms of message size and encoding/decoding performance.
 import unittest
 import time
 from typing import Dict, Any, Tuple
-from src.custom_protocol import protocol
-from src.json_protocol import protocol as json_protocol
+from src.custom_protocol import custom_protocol
+from src.json_protocol import json_protocol as json_protocol
 
 class ProtocolComparisonTests(unittest.TestCase):
     """Test cases comparing custom and JSON protocols"""
@@ -33,7 +33,7 @@ class ProtocolComparisonTests(unittest.TestCase):
             }
         }
 
-    def json_to_custom_payload(self, msg_type: str, payload: Dict[str, Any]) -> Tuple[protocol.Command, bytes]:
+    def json_to_custom_payload(self, msg_type: str, payload: Dict[str, Any]) -> Tuple[custom_protocol.Command, bytes]:
         """
         Convert a JSON payload to the custom protocol format.
         
@@ -50,7 +50,7 @@ class ProtocolComparisonTests(unittest.TestCase):
                 payload["username"].encode() +
                 payload["password_hash"].encode()
             )
-            return protocol.Command.AUTH, custom_payload
+            return custom_protocol.Command.AUTH, custom_payload
             
         elif msg_type == "SEND_MESSAGE":
             custom_payload = (
@@ -59,11 +59,11 @@ class ProtocolComparisonTests(unittest.TestCase):
                 len(payload["message"]).to_bytes(2, 'big') +
                 payload["message"].encode()
             )
-            return protocol.Command.SEND_MESSAGE, custom_payload
+            return custom_protocol.Command.SEND_MESSAGE, custom_payload
             
         else:  # LIST_ACCOUNTS and other messages
             custom_payload = str(payload).encode()
-            return protocol.Command.LIST_ACCOUNTS, custom_payload
+            return custom_protocol.Command.LIST_ACCOUNTS, custom_payload
 
     def test_message_sizes(self):
         """Compare message sizes between protocols"""
@@ -75,7 +75,7 @@ class ProtocolComparisonTests(unittest.TestCase):
         for msg_type, payload in self.test_cases.items():
             # Custom protocol
             command, custom_payload = self.json_to_custom_payload(msg_type, payload)
-            custom_msg = protocol.encode_message(command, custom_payload)
+            custom_msg = custom_protocol.encode_message(command, custom_payload)
 
             # JSON protocol
             json_msg = json_protocol.encode_message(
@@ -102,7 +102,7 @@ class ProtocolComparisonTests(unittest.TestCase):
             
             start_time = time.time()
             for _ in range(iterations):
-                protocol.encode_message(command, custom_payload)
+                custom_protocol.encode_message(command, custom_payload)
             custom_time = time.time() - start_time
 
             # Time JSON protocol

@@ -10,7 +10,7 @@ import socket
 from datetime import datetime
 from ...common.server_base import ThreadedTCPServer
 from ..server import JSONChatRequestHandler
-from .. import protocol
+from .. import json_protocol
 from ..client import JSONChatClient
 import json
 
@@ -92,21 +92,21 @@ class TestJSONProtocol(unittest.TestCase):
         """Test encoding/decoding of account-related commands"""
         test_cases = [
             (
-                protocol.Command.AUTH,
+                json_protocol.Command.AUTH,
                 {
                     "username": "testuser",
                     "password": "testpass"
                 }
             ),
             (
-                protocol.Command.CREATE_ACCOUNT,
+                json_protocol.Command.CREATE_ACCOUNT,
                 {
                     "username": "newuser",
                     "password": "newpass"
                 }
             ),
             (
-                protocol.Command.LIST_ACCOUNTS,
+                json_protocol.Command.LIST_ACCOUNTS,
                 {
                     "pattern": "*"
                 }
@@ -115,11 +115,11 @@ class TestJSONProtocol(unittest.TestCase):
         
         for command, payload in test_cases:
             with self.subTest(command=command):
-                message = protocol.encode_message(command, payload)
+                message = json_protocol.encode_message(command, payload)
                 decoded_json = json.loads(message.decode('utf-8'))
                 self.assertEqual(decoded_json["version"], self.PROTOCOL_VERSION)
                 
-                cmd, pl = protocol.decode_message(message)
+                cmd, pl = json_protocol.decode_message(message)
                 self.assertEqual(cmd, command)
                 self.assertEqual(pl, payload)
 
@@ -127,30 +127,30 @@ class TestJSONProtocol(unittest.TestCase):
         """Test encoding/decoding of message-related commands"""
         test_cases = [
             (
-                protocol.Command.SEND_MESSAGE,
+                json_protocol.Command.SEND_MESSAGE,
                 {
                     "recipient": "bob",
                     "content": "Hello, Bob!"
                 }
             ),
             (
-                protocol.Command.GET_MESSAGES,
+                json_protocol.Command.GET_MESSAGES,
                 {
                     "include_read": False
                 }
             ),
             (
-                protocol.Command.MARK_READ,
+                json_protocol.Command.MARK_READ,
                 {
                     "message_ids": [1, 2, 3]
                 }
             ),
             (
-                protocol.Command.GET_UNREAD_COUNT,
+                json_protocol.Command.GET_UNREAD_COUNT,
                 {}
             ),
             (
-                protocol.Command.DELETE_MESSAGES,
+                json_protocol.Command.DELETE_MESSAGES,
                 {
                     "message_ids": [4, 5, 6]
                 }
@@ -159,11 +159,11 @@ class TestJSONProtocol(unittest.TestCase):
         
         for command, payload in test_cases:
             with self.subTest(command=command):
-                message = protocol.encode_message(command, payload)
+                message = json_protocol.encode_message(command, payload)
                 decoded_json = json.loads(message.decode('utf-8'))
                 self.assertEqual(decoded_json["version"], self.PROTOCOL_VERSION)
                 
-                cmd, pl = protocol.decode_message(message)
+                cmd, pl = json_protocol.decode_message(message)
                 self.assertEqual(cmd, command)
                 self.assertEqual(pl, payload)
 
@@ -180,7 +180,7 @@ class TestJSONProtocol(unittest.TestCase):
         for invalid_msg in invalid_cases:
             with self.subTest(msg=invalid_msg):
                 with self.assertRaises(ValueError):
-                    protocol.decode_message(invalid_msg)
+                    json_protocol.decode_message(invalid_msg)
 
     def test_special_content(self):
         """Test handling of special characters in message content"""
@@ -199,8 +199,8 @@ class TestJSONProtocol(unittest.TestCase):
                     "recipient": "bob",
                     "content": content
                 }
-                message = protocol.encode_message(protocol.Command.SEND_MESSAGE, payload)
-                _, decoded_payload = protocol.decode_message(message)
+                message = json_protocol.encode_message(json_protocol.Command.SEND_MESSAGE, payload)
+                _, decoded_payload = json_protocol.decode_message(message)
                 self.assertEqual(decoded_payload["content"], content)
 
     def test_send_message(self):
@@ -255,7 +255,7 @@ class TestJSONProtocol(unittest.TestCase):
 
     def test_invalid_version(self):
         """Test handling of invalid protocol version"""
-        command = protocol.Command.AUTH
+        command = json_protocol.Command.AUTH
         payload = {"username": "alice", "password": "pass1"}
         message = json.dumps({
             "version": self.PROTOCOL_VERSION + 1,
@@ -264,7 +264,7 @@ class TestJSONProtocol(unittest.TestCase):
         }).encode('utf-8')
         
         with self.assertRaises(ValueError) as cm:
-            protocol.decode_message(message)
+            json_protocol.decode_message(message)
         self.assertIn("Unsupported protocol version", str(cm.exception))
 
 if __name__ == '__main__':

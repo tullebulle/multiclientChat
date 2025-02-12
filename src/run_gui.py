@@ -29,7 +29,7 @@ def main():
     
     try:
         if args.protocol == "custom":
-            client = ChatGUI(args.host, args.port)
+            client = ChatGUI(args.host, args.port, args.protocol)
         else:
             client = JSONChatGUIClient(args.host, args.port)
         client.run()

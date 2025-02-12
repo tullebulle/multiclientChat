@@ -8,16 +8,17 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import logging
 from datetime import datetime
-from src.custom_protocol import protocol
+from src.custom_protocol import custom_protocol
 from .client import CustomChatClient
 import argparse
 
 class ChatGUI:
-    def __init__(self, host="localhost", port=9999):
+    def __init__(self, host="localhost", port=9999, protocol = "custom'"):
         self.client = CustomChatClient(host=host, port=port)
         if not self.client.connect():
             messagebox.showerror("Error", "Could not connect to server!")
             return
+        self.protocol = protocol
         
         # Main window setup
         self.root = tk.Tk()
@@ -28,6 +29,8 @@ class ChatGUI:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(expand=True, fill='both', padx=5, pady=5)
         
+        # TODO: Initialize message tracking
+
         # Create tabs
         self.login_frame = self.create_login_tab()
         self.chat_frame = self.create_chat_tab()
@@ -55,7 +58,8 @@ class ChatGUI:
         self.login_password = ttk.Entry(login_frame, show="*")
         self.login_password.grid(row=1, column=1, padx=5, pady=5)
         
-        ttk.Button(login_frame, text="Login", command=self.handle_login).grid(row=2, column=0, columnspan=2, pady=10)
+        ttk.Button(login_frame, text="Login", command=self.handle_login).grid(
+            row=2, column=0, columnspan=2, pady=10)
         
         # Registration section
         reg_frame = ttk.LabelFrame(frame, text="Create Account", padding=10)
@@ -69,7 +73,8 @@ class ChatGUI:
         self.reg_password = ttk.Entry(reg_frame, show="*")
         self.reg_password.grid(row=1, column=1, padx=5, pady=5)
         
-        ttk.Button(reg_frame, text="Create Account", command=self.handle_register).grid(row=2, column=0, columnspan=2, pady=10)
+        ttk.Button(reg_frame, text="Create Account", command=self.handle_register).grid(
+            row=2, column=0, columnspan=2, pady=10)
         
         # Delete Account section
         delete_frame = ttk.LabelFrame(frame, text="Delete Account", padding=10)

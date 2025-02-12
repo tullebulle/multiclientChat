@@ -158,6 +158,8 @@ LIST_ACCOUNT
 
 Long messages: Double click on the message in the GUI, and it will show the full message in a popup.
 
+Client GUI structure: Currently, the code defining the GUI and highest abstraction of the client interacting with the GUI is different for the two profiles. This is because currently we are encoding the message for our custom protocol in this level. If instead we moved this to the protocol file, we could use the same code for the GUI and only make it differ were needed.
+
 
 
 Compare encoding performance between protocols ... 

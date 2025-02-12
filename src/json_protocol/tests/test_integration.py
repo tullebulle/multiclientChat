@@ -12,7 +12,7 @@ import sys
 from datetime import datetime
 from ...common.server_base import ThreadedTCPServer
 from ..server import JSONChatRequestHandler
-from .. import protocol
+from .. import json_protocol
 
 # Configure logging at module level
 logging.basicConfig(
@@ -77,15 +77,15 @@ class TestJSONIntegration(unittest.TestCase):
             logger.info(f"Sending command {command}")
             logger.debug(f"Payload: {payload}")
             
-            message = protocol.encode_message(command, payload)
+            message = json_protocol.encode_message(command, payload)
             logger.debug(f"Encoded message: {message.decode('utf-8')}")
             
             self.client.sendall(message)
             response = self.client.recv(4096)
             logger.debug(f"Raw response: {response.decode('utf-8')}")
             
-            cmd, payload = protocol.decode_message(response)
-            if isinstance(cmd, protocol.Command):
+            cmd, payload = json_protocol.decode_message(response)
+            if isinstance(cmd, json_protocol.Command):
                 cmd = cmd.name
             logger.info(f"Received response - cmd: {cmd}")
             logger.debug(f"Response payload: {payload}")
@@ -104,7 +104,7 @@ class TestJSONIntegration(unittest.TestCase):
             "password_hash": "pass1"
         }
         try:
-            cmd, response = self.send_command(protocol.Command.AUTH, payload)
+            cmd, response = self.send_command(json_protocol.Command.AUTH, payload)
             if response["status"] != "success":
                 logger.error(f"Login failed: {response}")
                 return False
@@ -124,14 +124,14 @@ class TestJSONIntegration(unittest.TestCase):
             "password": "testpass"
         }
         logger.info("Creating new test account")
-        cmd, response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
+        cmd, response = self.send_command(json_protocol.Command.CREATE_ACCOUNT, payload)
         
         self.assertEqual(cmd, "CREATE_ACCOUNT")
         self.assertEqual(response["status"], "success")
         
         # Test duplicate username
         logger.info("Testing duplicate username")
-        cmd, response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
+        cmd, response = self.send_command(json_protocol.Command.CREATE_ACCOUNT, payload)
         self.assertEqual(response["status"], "error")
 
     def test_authentication(self):
@@ -141,12 +141,12 @@ class TestJSONIntegration(unittest.TestCase):
             "username": "alice",
             "password_hash": "pass1"
         }
-        cmd, response = self.send_command(protocol.Command.AUTH, payload)
+        cmd, response = self.send_command(json_protocol.Command.AUTH, payload)
         self.assertEqual(response["status"], "success")
         
         # Test invalid credentials
         payload["password_hash"] = "wrongpass"
-        cmd, response = self.send_command(protocol.Command.AUTH, payload)
+        cmd, response = self.send_command(json_protocol.Command.AUTH, payload)
         self.assertEqual(response["status"], "error")
 
     def test_list_accounts(self):
@@ -159,7 +159,7 @@ class TestJSONIntegration(unittest.TestCase):
                 "password": "testpass"
             }
             logging.debug(f"🔵 Creating test account {i}: user{i:02d}")
-            cmd, resp = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
+            cmd, resp = self.send_command(json_protocol.Command.CREATE_ACCOUNT, payload)
             logging.debug(f"🔵 Creation response: {resp}")
         
         # Test pagination
@@ -169,11 +169,11 @@ class TestJSONIntegration(unittest.TestCase):
             "page_size": 10
         }
         logging.debug("\n🔵 Testing pagination with payload:", payload)
-        cmd, response = self.send_command(protocol.Command.LIST_ACCOUNTS, payload)
+        cmd, response = self.send_command(json_protocol.Command.LIST_ACCOUNTS, payload)
         logging.debug(f"🔵 LIST_ACCOUNTS RESPONSE - cmd: {cmd}")
         logging.debug(f"🔵 Response payload: {response}")
         
-        self.assertEqual(cmd, protocol.Command.LIST_ACCOUNTS.name)
+        self.assertEqual(cmd, json_protocol.Command.LIST_ACCOUNTS.name)
         self.assertEqual(response["status"], "success")
         self.assertEqual(len(response["accounts"]), 10)
         self.assertEqual(response["total_pages"], 3)
@@ -185,9 +185,9 @@ class TestJSONIntegration(unittest.TestCase):
             "recipient": "bob",
             "content": "Hello, Bob!"
         }
-        cmd, response = self.send_command(protocol.Command.SEND_MESSAGE, payload)
+        cmd, response = self.send_command(json_protocol.Command.SEND_MESSAGE, payload)
         
-        self.assertEqual(cmd, protocol.Command.SEND_MESSAGE.name)
+        self.assertEqual(cmd, json_protocol.Command.SEND_MESSAGE.name)
         self.assertEqual(response["status"], "success")
         self.assertIn("message_id", response)
         self.assertIn("timestamp", response)
@@ -196,17 +196,17 @@ class TestJSONIntegration(unittest.TestCase):
         """Test retrieving messages"""
         # Send a message first
         self.send_command(
-            protocol.Command.SEND_MESSAGE,
+            json_protocol.Command.SEND_MESSAGE,
             {"recipient": "bob", "content": "First message"}
         )
         
         # Get messages
         cmd, response = self.send_command(
-            protocol.Command.GET_MESSAGES,
+            json_protocol.Command.GET_MESSAGES,
             {"include_read": True}
         )
         
-        self.assertEqual(cmd, protocol.Command.GET_MESSAGES.name)
+        self.assertEqual(cmd, json_protocol.Command.GET_MESSAGES.name)
         self.assertEqual(response["status"], "success")
         self.assertIn("messages", response)
         self.assertTrue(isinstance(response["messages"], list))
@@ -215,11 +215,11 @@ class TestJSONIntegration(unittest.TestCase):
         """Test getting unread message count"""
         # Send messages
         self.send_command(
-            protocol.Command.SEND_MESSAGE,
+            json_protocol.Command.SEND_MESSAGE,
             {"recipient": "bob", "content": "Message 1"}
         )
         self.send_command(
-            protocol.Command.SEND_MESSAGE,
+            json_protocol.Command.SEND_MESSAGE,
             {"recipient": "bob", "content": "Message 2"}
         )
         
@@ -228,20 +228,20 @@ class TestJSONIntegration(unittest.TestCase):
         bob_client.connect(('localhost', self.server_port))
         
         # Auth as Bob
-        auth_message = protocol.encode_message(
-            protocol.Command.AUTH,
+        auth_message = json_protocol.encode_message(
+            json_protocol.Command.AUTH,
             {"username": "bob", "password_hash": "pass2"}
         )
         bob_client.sendall(auth_message)
         bob_client.recv(4096)  # Get auth response
         
         # Get unread count
-        count_message = protocol.encode_message(
-            protocol.Command.GET_UNREAD_COUNT,
+        count_message = json_protocol.encode_message(
+            json_protocol.Command.GET_UNREAD_COUNT,
             {}
         )
         bob_client.sendall(count_message)
-        _, response = protocol.decode_message(bob_client.recv(4096))
+        _, response = json_protocol.decode_message(bob_client.recv(4096))
         
         self.assertEqual(response["status"], "success")
         self.assertEqual(response["count"], 2)
@@ -252,7 +252,7 @@ class TestJSONIntegration(unittest.TestCase):
         """Test marking messages as read"""
         # Send a message
         _, send_response = self.send_command(
-            protocol.Command.SEND_MESSAGE,
+            json_protocol.Command.SEND_MESSAGE,
             {"recipient": "bob", "content": "Test message"}
         )
         message_id = send_response["message_id"]
@@ -262,20 +262,20 @@ class TestJSONIntegration(unittest.TestCase):
         bob_client.connect(('localhost', self.server_port))
         
         # Auth as Bob
-        auth_message = protocol.encode_message(
-            protocol.Command.AUTH,
+        auth_message = json_protocol.encode_message(
+            json_protocol.Command.AUTH,
             {"username": "bob", "password_hash": "pass2"}
         )
         bob_client.sendall(auth_message)
         bob_client.recv(4096)  # Get auth response
         
         # Mark as read
-        mark_message = protocol.encode_message(
-            protocol.Command.MARK_READ,
+        mark_message = json_protocol.encode_message(
+            json_protocol.Command.MARK_READ,
             {"message_ids": [message_id]}
         )
         bob_client.sendall(mark_message)
-        _, response = protocol.decode_message(bob_client.recv(4096))
+        _, response = json_protocol.decode_message(bob_client.recv(4096))
         
         self.assertEqual(response["status"], "success")
         self.assertEqual(response["marked_count"], 1)
@@ -289,12 +289,12 @@ class TestJSONIntegration(unittest.TestCase):
         unauth_client.connect(('localhost', self.server_port))
         
         # Try to send a message without auth
-        message = protocol.encode_message(
-            protocol.Command.SEND_MESSAGE,
+        message = json_protocol.encode_message(
+            json_protocol.Command.SEND_MESSAGE,
             {"recipient": "bob", "content": "Unauthorized message"}
         )
         unauth_client.sendall(message)
-        _, response = protocol.decode_message(unauth_client.recv(4096))
+        _, response = json_protocol.decode_message(unauth_client.recv(4096))
         
         self.assertEqual(response["status"], "error")
         self.assertIn("Not authenticated", response["message"])

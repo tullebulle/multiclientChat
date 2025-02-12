@@ -11,7 +11,7 @@ import struct
 from datetime import datetime
 from ...common.server_base import ThreadedTCPServer
 from ..server import CustomChatRequestHandler
-from .. import protocol
+from .. import custom_protocol
 import logging
 
 class TestCustomIntegration(unittest.TestCase):
@@ -87,7 +87,7 @@ class TestCustomIntegration(unittest.TestCase):
         payload = b'\x05alice\x05pass1'
         logging.debug(f"Login payload: {payload}")
         try:
-            cmd, response = self.send_command(protocol.Command.AUTH, payload)
+            cmd, response = self.send_command(custom_protocol.Command.AUTH, payload)
             logging.debug(f"Login response: cmd={cmd}, response={response}")
             if response != b'\x01':
                 raise RuntimeError(f"Failed to login as Alice (response: {response})")
@@ -100,7 +100,7 @@ class TestCustomIntegration(unittest.TestCase):
         """Helper to send a command and get response"""
         try:
             logging.debug(f"Sending command {command} with payload: {payload}")
-            message = protocol.encode_message(command, payload)
+            message = custom_protocol.encode_message(command, payload)
             logging.debug(f"Encoded message: {message}")
             self.client.sendall(message)
             
@@ -112,9 +112,9 @@ class TestCustomIntegration(unittest.TestCase):
                 raise RuntimeError(f"Failed to receive response header (got {len(header) if header else 0} bytes)")
             
             version, cmd_val, length = struct.unpack('!BBH', header)
-            if version != protocol.PROTOCOL_VERSION:
+            if version != custom_protocol.PROTOCOL_VERSION:
                 raise ValueError(f"Unsupported protocol version: {version}")
-            cmd = protocol.Command(cmd_val)
+            cmd = custom_protocol.Command(cmd_val)
             logging.debug(f"Decoded header - version: {version}, command: {cmd}, length: {length}")
             
             # Read payload
@@ -137,13 +137,13 @@ class TestCustomIntegration(unittest.TestCase):
         """Test account creation"""
         # Format: [username_len][username][password_len][password]
         payload = b'\x08testuser\x08testpass'
-        cmd, response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
+        cmd, response = self.send_command(custom_protocol.Command.CREATE_ACCOUNT, payload)
         
-        self.assertEqual(cmd, protocol.Command.CREATE_ACCOUNT)
+        self.assertEqual(cmd, custom_protocol.Command.CREATE_ACCOUNT)
         self.assertEqual(response, b'\x01')  # Success
         
         # Test duplicate username
-        cmd, response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
+        cmd, response = self.send_command(custom_protocol.Command.CREATE_ACCOUNT, payload)
         self.assertEqual(response, b'\x00')  # Failure
 
     def test_authentication(self):
@@ -154,14 +154,14 @@ class TestCustomIntegration(unittest.TestCase):
         # Test valid credentials
         payload = b'\x05alice\x05pass1'
         logging.debug(f"Sending auth payload: {payload}")
-        cmd, response = self.send_command(protocol.Command.AUTH, payload)
+        cmd, response = self.send_command(custom_protocol.Command.AUTH, payload)
         logging.debug(f"Received auth response: cmd={cmd}, response={response}")
         self.assertEqual(response, b'\x01')  # Success
         
         # Test invalid credentials
         payload = b'\x05alice\x08wrongpass'
         logging.debug(f"Sending invalid auth payload: {payload}")
-        cmd, response = self.send_command(protocol.Command.AUTH, payload)
+        cmd, response = self.send_command(custom_protocol.Command.AUTH, payload)
         logging.debug(f"Received invalid auth response: cmd={cmd}, response={response}")
         self.assertEqual(response, b'\x00')  # Failure
 
@@ -171,11 +171,11 @@ class TestCustomIntegration(unittest.TestCase):
         for i in range(5):
             username = f"user{i:02d}"
             payload = bytes([len(username)]) + username.encode() + b'\x08testpass'
-            self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
+            self.send_command(custom_protocol.Command.CREATE_ACCOUNT, payload)
         
         # List all accounts
         payload = b'\x01*'  # pattern_len(1) + pattern(1)
-        cmd, response = self.send_command(protocol.Command.LIST_ACCOUNTS, payload)
+        cmd, response = self.send_command(custom_protocol.Command.LIST_ACCOUNTS, payload)
         
         # Should find at least 7 accounts (alice, bob, user00-user04)
         self.assertGreaterEqual(len(response), 7)
@@ -186,9 +186,9 @@ class TestCustomIntegration(unittest.TestCase):
         content = "Hello, Bob!"
         payload = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
         
-        cmd, response = self.send_command(protocol.Command.SEND_MESSAGE, payload)
+        cmd, response = self.send_command(custom_protocol.Command.SEND_MESSAGE, payload)
         
-        self.assertEqual(cmd, protocol.Command.SEND_MESSAGE)
+        self.assertEqual(cmd, custom_protocol.Command.SEND_MESSAGE)
         self.assertEqual(len(response), 4)  # message_id(4) only
         
         message_id = struct.unpack('!I', response)[0]
@@ -203,7 +203,7 @@ class TestCustomIntegration(unittest.TestCase):
             
             # Auth as Bob
             auth_payload = b'\x03bob\x05pass2'
-            auth_message = protocol.encode_message(protocol.Command.AUTH, auth_payload)
+            auth_message = custom_protocol.encode_message(custom_protocol.Command.AUTH, auth_payload)
             bob_client.sendall(auth_message)
             
             # Read auth response properly (4 bytes: version + command + length)
@@ -211,7 +211,7 @@ class TestCustomIntegration(unittest.TestCase):
             if not header or len(header) != 4:
                 raise RuntimeError("Failed to receive auth response header")
             version, cmd_val, length = struct.unpack('!BBH', header)
-            if version != protocol.PROTOCOL_VERSION:
+            if version != custom_protocol.PROTOCOL_VERSION:
                 raise ValueError(f"Unsupported protocol version: {version}")
             response = bob_client.recv(length)
             
@@ -229,7 +229,7 @@ class TestCustomIntegration(unittest.TestCase):
         # Send a test message first
         content = "Test message"
         send_payload = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        cmd, send_response = self.send_command(protocol.Command.SEND_MESSAGE, send_payload)
+        cmd, send_response = self.send_command(custom_protocol.Command.SEND_MESSAGE, send_payload)
         logging.debug(f"Send message response: {send_response}")
         
         # Use Bob's client to get messages
@@ -238,7 +238,7 @@ class TestCustomIntegration(unittest.TestCase):
             
             # Get messages with proper protocol version handling
             get_payload = b'\x01'  # include_read = True
-            get_message = protocol.encode_message(protocol.Command.GET_MESSAGES, get_payload)
+            get_message = custom_protocol.encode_message(custom_protocol.Command.GET_MESSAGES, get_payload)
             bob_client.sendall(get_message)
             
             # Read response with 4-byte header
@@ -246,7 +246,7 @@ class TestCustomIntegration(unittest.TestCase):
             if not header or len(header) != 4:
                 raise RuntimeError("Failed to receive get_messages response header")
             version, cmd_val, length = struct.unpack('!BBH', header)
-            if version != protocol.PROTOCOL_VERSION:
+            if version != custom_protocol.PROTOCOL_VERSION:
                 raise ValueError(f"Unsupported protocol version: {version}")
             response = bob_client.recv(length)
             
@@ -263,7 +263,7 @@ class TestCustomIntegration(unittest.TestCase):
         # Send a message first
         content = "Read this"
         send_payload = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        cmd, send_response = self.send_command(protocol.Command.SEND_MESSAGE, send_payload)
+        cmd, send_response = self.send_command(custom_protocol.Command.SEND_MESSAGE, send_payload)
         message_id = struct.unpack('!I', send_response[:4])[0]
         
         # Login as Bob
@@ -272,15 +272,15 @@ class TestCustomIntegration(unittest.TestCase):
         
         # Auth as Bob
         auth_payload = b'\x03bob\x05pass2'
-        auth_message = protocol.encode_message(protocol.Command.AUTH, auth_payload)
+        auth_message = custom_protocol.encode_message(custom_protocol.Command.AUTH, auth_payload)
         bob_client.sendall(auth_message)
         bob_client.recv(1024)  # Get auth response
         
         # Mark as read
         mark_payload = struct.pack('!HI', 1, message_id)  # count + message_id
-        mark_message = protocol.encode_message(protocol.Command.MARK_READ, mark_payload)
+        mark_message = custom_protocol.encode_message(custom_protocol.Command.MARK_READ, mark_payload)
         bob_client.sendall(mark_message)
-        _, mark_response = protocol.decode_message(bob_client.recv(1024))
+        _, mark_response = custom_protocol.decode_message(bob_client.recv(1024))
         
         marked_count = struct.unpack('!H', mark_response)[0]
         self.assertEqual(marked_count, 1)
@@ -292,11 +292,11 @@ class TestCustomIntegration(unittest.TestCase):
         # Send two messages
         content = "Unread 1"
         send_payload1 = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        self.send_command(protocol.Command.SEND_MESSAGE, send_payload1)
+        self.send_command(custom_protocol.Command.SEND_MESSAGE, send_payload1)
         
         content = "Unread 2"
         send_payload2 = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        self.send_command(protocol.Command.SEND_MESSAGE, send_payload2)
+        self.send_command(custom_protocol.Command.SEND_MESSAGE, send_payload2)
         
         # Login as Bob and check unread count
         bob_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -304,14 +304,14 @@ class TestCustomIntegration(unittest.TestCase):
         
         # Auth as Bob
         auth_payload = b'\x03bob\x05pass2'
-        auth_message = protocol.encode_message(protocol.Command.AUTH, auth_payload)
+        auth_message = custom_protocol.encode_message(custom_protocol.Command.AUTH, auth_payload)
         bob_client.sendall(auth_message)
         bob_client.recv(1024)  # Get auth response
         
         # Get unread count
-        count_message = protocol.encode_message(protocol.Command.GET_UNREAD_COUNT, b'')
+        count_message = custom_protocol.encode_message(custom_protocol.Command.GET_UNREAD_COUNT, b'')
         bob_client.sendall(count_message)
-        _, count_response = protocol.decode_message(bob_client.recv(1024))
+        _, count_response = custom_protocol.decode_message(bob_client.recv(1024))
         
         unread_count = struct.unpack('!H', count_response)[0]
         self.assertEqual(unread_count, 2)
@@ -323,7 +323,7 @@ class TestCustomIntegration(unittest.TestCase):
         # Send a message first
         content = "Delete me"
         send_payload = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        cmd, send_response = self.send_command(protocol.Command.SEND_MESSAGE, send_payload)
+        cmd, send_response = self.send_command(custom_protocol.Command.SEND_MESSAGE, send_payload)
         message_id = struct.unpack('!I', send_response[:4])[0]
         logging.debug(f"Created message with ID: {message_id}")
         
@@ -335,7 +335,7 @@ class TestCustomIntegration(unittest.TestCase):
             # Delete the message
             delete_payload = struct.pack('!HI', 1, message_id)  # count + message_id
             logging.debug(f"Sending delete request for message ID: {message_id}")
-            delete_message = protocol.encode_message(protocol.Command.DELETE_MESSAGES, delete_payload)
+            delete_message = custom_protocol.encode_message(custom_protocol.Command.DELETE_MESSAGES, delete_payload)
             bob_client.sendall(delete_message)
             
             # Read response properly with 4-byte header
@@ -343,7 +343,7 @@ class TestCustomIntegration(unittest.TestCase):
             if not header or len(header) != 4:
                 raise RuntimeError("Failed to receive delete response header")
             version, cmd_val, length = struct.unpack('!BBH', header)
-            if version != protocol.PROTOCOL_VERSION:
+            if version != custom_protocol.PROTOCOL_VERSION:
                 raise ValueError(f"Unsupported protocol version: {version}")
             response = bob_client.recv(length)
             
