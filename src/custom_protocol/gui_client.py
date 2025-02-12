@@ -94,13 +94,22 @@ class ChatGUI:
         frame = ttk.Frame(self.notebook)
         self.notebook.add(frame, text='Chat')
         
-        # Top frame for user info and refresh
+        # Top frame for user info, refresh, and message limit
         top_frame = ttk.Frame(frame)
         top_frame.pack(fill='x', padx=5, pady=5)
         
         # User info and refresh button side by side
         self.login_label = ttk.Label(top_frame, text="Not logged in", font=('TkDefaultFont', 10, 'bold'))
         self.login_label.pack(side='left', anchor='w')
+        
+        # Add message limit control
+        limit_frame = ttk.Frame(top_frame)
+        limit_frame.pack(side='right', padx=5)
+        
+        ttk.Label(limit_frame, text="Messages to show:").pack(side='left', padx=2)
+        self.message_limit = ttk.Spinbox(limit_frame, from_=1, to=100, width=5)
+        self.message_limit.set(10)  # Default value
+        self.message_limit.pack(side='left', padx=2)
         
         ttk.Button(top_frame, text="↻ Refresh Messages", 
                    command=self.refresh_messages).pack(side='right', padx=5)
@@ -143,9 +152,20 @@ class ChatGUI:
         self.message_list.heading('From', text='From')
         self.message_list.heading('Message', text='Message')
         
-        self.message_list.column('Time', width=70, anchor='w')
-        self.message_list.column('From', width=100, anchor='w')
-        self.message_list.column('Message', width=300, anchor='w')
+        # Bind double-click event to show full message
+        self.message_list.bind('<Double-1>', self.show_full_message)
+        
+        # Set column widths and stretch behavior
+        self.message_list.column('Time', width=70, minwidth=70, stretch=False)
+        self.message_list.column('From', width=100, minwidth=100, stretch=False)
+        self.message_list.column('Message', width=300, minwidth=200, stretch=True)
+        
+        # Add binding for dynamic message wrapping
+        def on_treeview_resize(event):
+            message_col_width = self.message_list.winfo_width() - 170  # Subtract width of other columns
+            self.message_list.column('Message', width=max(300, message_col_width))
+        
+        self.message_list.bind('<Configure>', on_treeview_resize)
         
         # Configure tag styles for read/unread
         self.message_list.tag_configure('unread', font=('TkDefaultFont', 10, 'bold'))
@@ -295,11 +315,44 @@ class ChatGUI:
                 self.message_list.delete(item)
             self.message_ids.clear()
             
-            # Add messages to treeview
-            for msg in sorted(messages, key=lambda x: x['timestamp']):
+            # Sort messages by timestamp and limit the number shown
+            limit = int(self.message_limit.get())
+            sorted_messages = sorted(messages, key=lambda x: x['timestamp'])
+            recent_messages = sorted_messages[-limit:]
+            
+            # Calculate wrap width based on Message column width
+            message_col_width = self.message_list.column('Message', 'width')
+            chars_per_line = message_col_width // 7  # Approximate characters that fit per line
+            
+            # Add messages to treeview with dynamic word wrapping
+            for msg in recent_messages:
                 timestamp = msg['timestamp'].strftime('%H:%M:%S')
+                content = msg['content']
+                
+                # Word wrap the content
+                words = content.split()
+                lines = []
+                current_line = []
+                current_length = 0
+                
+                for word in words:
+                    word_length = len(word)
+                    if current_length + word_length + 1 <= chars_per_line:
+                        current_line.append(word)
+                        current_length += word_length + 1
+                    else:
+                        if current_line:
+                            lines.append(' '.join(current_line))
+                        current_line = [word]
+                        current_length = word_length
+                
+                if current_line:
+                    lines.append(' '.join(current_line))
+                
+                wrapped_content = '\n'.join(lines)
+                
                 item_id = self.message_list.insert('', 'end',
-                    values=(timestamp, msg['sender'], msg['content']),
+                    values=(timestamp, msg['sender'], wrapped_content),
                     tags=('unread' if not msg['is_read'] else 'read',))
                 self.message_ids[item_id] = msg['id']
                 
@@ -350,6 +403,54 @@ class ChatGUI:
                 self.refresh_messages()  # Refresh after deleting
             else:
                 messagebox.showerror("Error", "Failed to delete messages")
+        
+    def show_full_message(self, event):
+        """Show the full message in a popup window when double-clicked"""
+        selected_items = self.message_list.selection()
+        if not selected_items:
+            return
+        
+        # Get the message content
+        item = selected_items[0]  # Get first selected item
+        values = self.message_list.item(item)['values']
+        if not values:
+            return
+        
+        time, sender, content = values
+
+        # marking the message as read
+        if self.client.mark_read([self.message_ids[item]]):
+            self.refresh_messages()  # Refresh to update the visual state
+        else:
+            messagebox.showerror("Error", "Failed to mark message as read")
+        
+        # Create popup window
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Message from {sender} at {time}")
+        popup.geometry("400x300")
+        
+        # Add text widget with scrollbar
+        text_frame = ttk.Frame(popup)
+        text_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        text_widget = tk.Text(text_frame, wrap='word', padx=5, pady=5)
+        text_widget.pack(side='left', fill='both', expand=True)
+        
+        scrollbar = ttk.Scrollbar(text_frame, orient='vertical', command=text_widget.yview)
+        scrollbar.pack(side='right', fill='y')
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        # Insert message content
+        text_widget.insert('1.0', content)
+        text_widget.configure(state='disabled')  # Make read-only
+        
+        # Add close button
+        ttk.Button(popup, text="Close", command=popup.destroy).pack(pady=5)
+        
+        # Make the popup modal
+        popup.transient(self.root)
+        popup.grab_set()
+        self.root.wait_window(popup)
         
     def run(self):
         """Start the GUI"""

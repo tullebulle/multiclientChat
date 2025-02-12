@@ -156,6 +156,8 @@ LIST_ACCOUNT
 }
 
 
+Long messages: Double click on the message in the GUI, and it will show the full message in a popup.
+
 
 
 Compare encoding performance between protocols ... 
