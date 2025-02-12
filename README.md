@@ -60,3 +60,8 @@ Compare the test custom protocol and JSON protocol in terms of size and space:
 ```bash
 python src/compare_protocols.py
 ```
+
+
+### Attributions
+
+- [Cursor](https://www.cursor.com/) - AI code assistant
