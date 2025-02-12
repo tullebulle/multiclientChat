@@ -18,12 +18,11 @@ sys.path.append(parent_dir)
 from src.json_protocol.server import JSONChatServer
 from src.custom_protocol.server import CustomChatServer
 
-def shutdown_servers(servers):
-    """Shutdown all servers gracefully"""
-    logging.info("Shutting down servers...")
-    for server in servers:
-        server.shutdown()
-        server.server_close()
+def shutdown_server(server):
+    """Shutdown server gracefully"""
+    logging.info("Shutting down server...")
+    server.shutdown()
+    server.server_close()
 
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
@@ -36,24 +35,14 @@ def main():
     """Main entry point for the chat server"""
     parser = argparse.ArgumentParser(description="Chat server")
     parser.add_argument("--host", default="localhost", help="Server host")
-    parser.add_argument("--port", type=int, default=9999, help="Server port for custom protocol")
+    parser.add_argument("--port", type=int, default=9999, help="Server port")
     parser.add_argument(
         "--protocol",
-        choices=["json", "custom", "both"],
+        choices=["json", "custom"],
         default="custom",
-        help="Protocol to use (json, custom, or both)"
+        help="Protocol to use (json or custom)"
     )
     
-    # TODO: Fix both server port problem
-
-    # # Remove json-port argument since it's always 9998
-    # parser.add_argument(
-    #     "--custom-port",
-    #     type=int,
-    #     default=9999,
-    #     help="Port for custom protocol when running both"
-    # )
-
     args = parser.parse_args()
     
     # Set up logging
@@ -65,47 +54,36 @@ def main():
     # Handle Ctrl+C gracefully
     signal.signal(signal.SIGINT, signal_handler)
     
-    servers = []
-    server_threads = []
-    
     try:
-        if args.protocol in ["custom", "both"]:
-            custom_server = CustomChatServer((args.host, args.port))
-            servers.append(custom_server)
+        if args.protocol == "custom":
+            server = CustomChatServer((args.host, args.port))
             logging.info(f"Custom protocol server starting on {args.host}:{args.port}")
             
-        if args.protocol in ["json", "both"]:
-            json_server = JSONChatServer((args.host, args.port))
-            servers.append(json_server)
+        if args.protocol == "json":
+            server = JSONChatServer((args.host, args.port))
             logging.info(f"JSON protocol server starting on {args.host}:{args.port}")
         
         # Start all servers in separate threads
-        for server in servers:
-            thread = threading.Thread(target=server.serve_forever)
-            thread.daemon = True
-            thread.start()
-            server_threads.append(thread)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
             
         # Keep main thread running
         while True:
-            for thread in server_threads:
-                if not thread.is_alive():
-                    raise Exception("Server thread died unexpectedly")
+            if not thread.is_alive():
+                raise Exception("Server thread died unexpectedly")
             threading.Event().wait(1.0)  # More efficient than time.sleep(1)
             
     except KeyboardInterrupt:
-        shutdown_servers(servers)
+        shutdown_server(server)
         # Wait for threads to finish
-        for thread in server_threads:
-            thread.join(timeout=5.0)
+        thread.join(timeout=5.0)
         logging.info("Server shutdown complete")
         
     except Exception as e:
         logging.error(f"Error running server: {e}")
-        shutdown_servers(servers)
-        # Wait for threads to finish
-        for thread in server_threads:
-            thread.join(timeout=5.0)
+        shutdown_server(server)
+        thread.join(timeout=5.0)
         logging.info("Server shutdown complete")
         sys.exit(1)
 
