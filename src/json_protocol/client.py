@@ -227,6 +227,32 @@ class JSONChatClient:
                 return payload.get("marked_count", 0)
         return 0
 
+    def delete_messages(self, message_ids: list) -> bool:
+        """
+        Delete specific messages
+        
+        Args:
+            message_ids: List of message IDs to delete
+            
+        Returns:
+            bool: True if successful
+        """
+        if not self.current_user:
+            logging.error("Not logged in")
+            return False
+        
+        response = self.send_command(protocol.Command.DELETE_MESSAGES, {
+            "message_ids": message_ids
+        })
+
+        if response:
+            cmd, result = response
+            if cmd == protocol.Command.ERROR:
+                logging.error(f"Failed to delete messages: {result.decode()}")
+                return False
+            return True
+        return False
+
     def get_unread_count(self) -> int:
         """Get number of unread messages
         

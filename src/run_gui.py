@@ -12,8 +12,7 @@ import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
-from src.custom_protocol.gui_client import ChatGUI
-from src.json_protocol.gui_client import JSONChatGUIClient
+from src.common.gui_client import ChatGUI
 
 def main():
     parser = argparse.ArgumentParser(description="Chat GUI client")
@@ -28,12 +27,8 @@ def main():
     args = parser.parse_args()
     
     try:
-        if args.protocol == "custom":
-            client = ChatGUI(args.host, args.port)
-        else:
-            client = JSONChatGUIClient(args.host, args.port)
+        client = ChatGUI(args.host, args.port, args.protocol)
         client.run()
-        
     except KeyboardInterrupt:
         print("\nShutting down client...")
     except Exception as e:

@@ -9,16 +9,23 @@ from tkinter import ttk, messagebox
 import logging
 from datetime import datetime
 from src.custom_protocol import protocol
-from .client import CustomChatClient
+from ..custom_protocol.client import CustomChatClient
+from ..json_protocol.client import JSONChatClient
 import argparse
 
 class ChatGUI:
-    def __init__(self, host="localhost", port=9999):
-        self.client = CustomChatClient(host=host, port=port)
+    def __init__(self, host="localhost", port=9999, protocol = "custom"):
+        if protocol == "custom":
+            self.client = CustomChatClient(host=host, port=port)
+        else:
+            self.client = JSONChatClient(host=host, port=port)
+
         if not self.client.connect():
             messagebox.showerror("Error", "Could not connect to server!")
             return
         
+        self.protocol = protocol
+
         # Main window setup
         self.root = tk.Tk()
         self.root.title("Chat Application")
@@ -227,8 +234,10 @@ class ChatGUI:
         if not username or not password:
             messagebox.showerror("Error", "Please enter both username and password")
             return
+        
+        success = self.client.login(username, password)
             
-        if self.client.login(username, password):
+        if success:
             messagebox.showinfo("Success", "Logged in successfully!")
             self.notebook.tab(1, state='normal')
             self.notebook.select(1)
@@ -247,8 +256,10 @@ class ChatGUI:
         if not username or not password:
             messagebox.showerror("Error", "Please enter both username and password")
             return
+        
+        success = self.client.create_account(username, password)
             
-        if self.client.create_account(username, password):
+        if success:
             messagebox.showinfo("Success", "Account created successfully!")
             # Clear registration fields
             self.reg_username.delete(0, tk.END)
@@ -344,7 +355,7 @@ class ChatGUI:
             
             # Add messages to treeview with dynamic word wrapping
             for msg in recent_messages:
-                timestamp = msg['timestamp'].strftime('%H:%M:%S')
+                timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%H:%M:%S')
                 content = msg['content']
                 
                 # Word wrap the content

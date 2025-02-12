@@ -98,7 +98,7 @@ class CustomChatClient:
                 print("Account created successfully!")
             else:
                 print("Failed to create account: Username might be taken")
-            return success
+            return success, None
                 
     def login(self, username=None, password=None):
         """Log in to an existing account"""
