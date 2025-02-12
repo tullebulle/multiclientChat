@@ -61,7 +61,6 @@ Compare the test custom protocol and JSON protocol in terms of size and space:
 python src/compare_protocols.py
 ```
 
-// ... existing code ...
 
 ## About the Application
 
@@ -105,3 +104,13 @@ This multiclient chat application demonstrates different approaches to client-se
 - Thread-safe operations
 
 The application serves as a practical example of different protocol implementations and their trade-offs in a real-world messaging system.
+
+
+## Attributions
+
+We used Cursor to help us with implementation.
+
+We also used the following websites to help us with the implementation:
+- https://www.geeksforgeeks.org/tcp-server-client-implementation-in-python/
+- https://www.geeksforgeeks.org/socket-programming-multi-threading-python/
+- https://www.geeksforgeeks.org/socket-programming-in-python/

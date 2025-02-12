@@ -26,9 +26,12 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
         
         while True:
             try:
-                # Receive data from client
-                logging.debug("Waiting for client data...")
-                data = self.request.recv(1024) # need to modify this to receive larger messages
+                # Receive data from client - use max possible payload size + header size
+                # Header: [version:1][command:1][length:2] = 4 bytes
+                # Max payload: 2^16 - 1 = 65535 bytes
+                max_message_size = 4 + 65535
+                data = self.request.recv(max_message_size)
+                
                 if not data:
                     logging.info("Client closed connection")
                     break
