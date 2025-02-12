@@ -16,33 +16,21 @@ sudo apt-get install python3-tk
 ```
 
 
-#### Custom Protocol
-To run the server with the custom protocol, use the following command from the root directory:
-
+#### Running the server and client
+To run the server, use the following command from the root directory:
 ```bash
-python src/run_server.py --protocol custom
+python src/run_server.py
 ```
 
 To run a client gui, use the following command from the root directory:
-
 ```bash
-python src/run_gui.py --protocol custom
+python src/run_gui.py
 ```
 
-
-#### JSON Protocol
-
-To run the server with the JSON protocol, use the following command:
-
-```bash
-python src/run_server.py --protocol json
-```
-and run the gui client with the JSON protocol, use the following command:
-```bash
-python src/run_gui.py --protocol json
-```
-
-
+Both the server and client take three optional arguments:
+- `--protocol`: the protocol to use, either `custom` (default) or `json`
+- `--host`: the host to connect to, e.g. `localhost` (default) or `0.0.0.0`
+- `--port`: the port to connect to, e.g. `9999` (default) or `12345`
 
 
 ### Testing
