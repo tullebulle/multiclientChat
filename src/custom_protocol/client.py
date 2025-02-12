@@ -12,6 +12,7 @@ import logging
 import struct
 from datetime import datetime
 from src.custom_protocol import protocol
+import hashlib
 
 # Set up logging at the start of the file
 logging.basicConfig(
@@ -73,6 +74,10 @@ class CustomChatClient:
             logging.error(f"Error sending command: {e}")
             return None
             
+    def _hash_password(self, password: str) -> str:
+        """Hash password using SHA-256"""
+        return hashlib.sha256(password.encode()).hexdigest()
+
     def create_account(self, username=None, password=None):
         """Create a new account"""
         if username is None:
@@ -80,14 +85,15 @@ class CustomChatClient:
         if password is None:
             password = getpass.getpass("Password: ").strip()
         
-        # Format: [username_length][username][password_length][password]
+        # Hash password before sending
+        password_hash = self._hash_password(password)
+        
+        # Format: [username_length][username][password_hash_length][password_hash]
         payload = bytes([len(username)]) + username.encode()
-        payload += bytes([len(password)]) + password.encode()
+        payload += bytes([len(password_hash)]) + password_hash.encode()
         
         logging.debug(f"Create account payload: {[b for b in payload]}")
         logging.debug(f"Username: '{username}', length: {len(username)}")
-        logging.debug(f"Password length: {len(password)}")
-        logging.debug(f"Password hash: {hash(password)}")
         
         response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
         if response:
@@ -107,14 +113,15 @@ class CustomChatClient:
         if password is None:
             password = getpass.getpass("Password: ").strip()
         
-        # Format: [username_length][username][password_length][password]
+        # Hash password before sending
+        password_hash = self._hash_password(password)
+        
+        # Format: [username_length][username][password_hash_length][password_hash]
         payload = bytes([len(username)]) + username.encode()
-        payload += bytes([len(password)]) + password.encode()
+        payload += bytes([len(password_hash)]) + password_hash.encode()
         
         logging.debug(f"Login payload: {[b for b in payload]}")
         logging.debug(f"Username: '{username}', length: {len(username)}")
-        logging.debug(f"Password length: {len(password)}")
-        logging.debug(f"Password hash: {hash(password)}")
         
         response = self.send_command(protocol.Command.AUTH, payload)
         if response:
@@ -332,9 +339,12 @@ class CustomChatClient:
         Returns:
             bool: True if account was deleted successfully
         """
-        # Format: [username_length][username][password_length][password]
+        # Hash password before sending
+        password_hash = self._hash_password(password)
+        
+        # Format: [username_length][username][password_hash_length][password_hash]
         payload = bytes([len(username)]) + username.encode()
-        payload += bytes([len(password)]) + password.encode()
+        payload += bytes([len(password_hash)]) + password_hash.encode()
         
         logging.debug(f"Attempting to delete account: {username}")
         response = self.send_command(protocol.Command.DELETE_ACCOUNT, payload)
@@ -369,56 +379,3 @@ class CustomChatClient:
                 return -1
             return struct.unpack('!H', result)[0]
         return -1
-
-    def main_loop(self):
-        """Main client loop"""
-        commands = {
-            "1": ("Create account", self.create_account),
-            "2": ("Login", self.login),
-            "3": ("List accounts", self.list_accounts),
-            "4": ("Send message", self.send_message),
-            "5": ("Get messages", self.get_messages),
-            "6": ("Mark messages as read", self.mark_read),
-            "7": ("Delete messages", self.delete_messages),
-            "8": ("Delete account", self.delete_account),
-            "9": ("Get unread count", self.get_unread_count),
-            "10": ("Quit", lambda: "quit")
-        }
-        
-        while True:
-            print("\nAvailable commands:")
-            for key, (name, _) in commands.items():
-                print(f"{key}: {name}")
-            if self.current_user:
-                print(f"\nLogged in as: {self.current_user}")
-            else:
-                print("\nNot logged in")
-                
-            choice = input("\nEnter command number: ").strip()
-            
-            if choice not in commands:
-                print("Invalid command!")
-                continue
-                
-            name, func = commands[choice]
-            result = func()
-            
-            if result == "quit":
-                break
-
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description="Chat client (Custom Protocol)")
-    parser.add_argument("--host", default="localhost", help="Server host")
-    parser.add_argument("--port", type=int, default=9999, help="Server port")
-    args = parser.parse_args()
-    
-    client = CustomChatClient(args.host, args.port)
-    if client.connect():
-        try:
-            client.main_loop()
-        finally:
-            client.disconnect()
-
-if __name__ == "__main__":
-    main() 

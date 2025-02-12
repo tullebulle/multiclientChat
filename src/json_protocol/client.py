@@ -12,6 +12,7 @@ import logging
 import json
 from typing import Tuple, Dict, Any
 from . import protocol
+import hashlib
 
 class JSONChatClient:
     """Interactive chat client using JSON protocol"""
@@ -101,6 +102,10 @@ class JSONChatClient:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON format: {e}")
 
+    def _hash_password(self, password: str) -> str:
+        """Hash password using SHA-256"""
+        return hashlib.sha256(password.encode()).hexdigest()
+    
     def create_account(self, username: str, password: str) -> bool:
         """Create a new account
         
@@ -111,9 +116,12 @@ class JSONChatClient:
         Returns:
             bool: True if account was created successfully
         """
+        # Hash password before sending
+        password_hash = self._hash_password(password)
+        
         payload = {
             "username": username,
-            "password": password
+            "password": password_hash
         }
         
         response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
@@ -132,9 +140,12 @@ class JSONChatClient:
         Returns:
             bool: True if login was successful
         """
+        # Hash password before sending
+        password_hash = self._hash_password(password)
+        
         payload = {
             "username": username,
-            "password": password
+            "password": password_hash
         }
         
         response = self.send_command(protocol.Command.AUTH, payload)
@@ -276,9 +287,12 @@ class JSONChatClient:
         Returns:
             bool: True if account was deleted successfully
         """
+        # Hash password before sending
+        password_hash = self._hash_password(password)
+        
         payload = {
             "username": username,
-            "password": password
+            "password": password_hash
         }
         
         response = self.send_command(protocol.Command.DELETE_ACCOUNT, payload)
@@ -287,19 +301,3 @@ class JSONChatClient:
             return payload.get("status") == "success"
         return False
 
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description="Chat client (JSON Protocol)")
-    parser.add_argument("--host", default="localhost", help="Server host")
-    parser.add_argument("--port", type=int, default=9998, help="Server port")
-    args = parser.parse_args()
-    
-    client = JSONChatClient(args.host, args.port)
-    if client.connect():
-        try:
-            client.main_loop()
-        finally:
-            client.disconnect()
-
-if __name__ == "__main__":
-    main() 
