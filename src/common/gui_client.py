@@ -276,20 +276,38 @@ class ChatGUI:
             messagebox.showerror("Error", "Please enter both username and password")
             return
         
-        # Check for unread messages
-        if self.client.current_user == username:
-            messages = self.client.get_messages(include_read=False)
-            if messages:
-                if not messagebox.askyesno("Warning", 
-                                         f"You have {len(messages)} unread messages!\n"
-                                         "Are you sure you want to delete your account?\n"
-                                         "This action cannot be undone!"):
-                    return
+        # Try to login as the user to check messages
+        temp_client = None
+        if self.client.current_user != username:
+            # Create temporary client with same protocol
+            if self.protocol == "custom":
+                temp_client = CustomChatClient(host=self.client.host, port=self.client.port)
+            else:
+                temp_client = JSONChatClient(host=self.client.host, port=self.client.port)
+            
+            if not temp_client.connect() or not temp_client.login(username, password):
+                messagebox.showerror("Error", "Failed to verify account. Please check your credentials.")
+                return
+            messages = temp_client.get_messages(include_read=False)
         else:
-            # Regular confirmation for non-logged-in deletion
+            messages = self.client.get_messages(include_read=False)
+        
+        # Check for unread messages
+        if messages:
+            if not messagebox.askyesno("Warning", 
+                                      f"This account has {len(messages)} unread messages!\n"
+                                      "Are you sure you want to delete your account?\n"
+                                      "This action cannot be undone!"):
+                if temp_client:
+                    temp_client.disconnect()
+                return
+        else:
+            # Regular confirmation for deletion without unread messages
             if not messagebox.askyesno("Confirm Delete", 
                                       "Are you sure you want to delete your account?\n"
                                       "This action cannot be undone!"):
+                if temp_client:
+                    temp_client.disconnect()
                 return
         
         # Try to delete account
@@ -305,6 +323,10 @@ class ChatGUI:
                 self.client.current_user = None
         else:
             messagebox.showerror("Error", "Failed to delete account. Please check your credentials.")
+        
+        # Clean up temporary client if used
+        if temp_client:
+            temp_client.disconnect()
             
     def refresh_users(self):
         """Refresh the user list"""
@@ -397,11 +419,12 @@ class ChatGUI:
         """Handle search button click"""
         search_text = self.search_entry.get().strip()
         self.current_page = 1  # Reset to first page on new search
-        self.update_user_list()
+        self.update_user_list(search_text)
 
-    def update_user_list(self):
+    def update_user_list(self, search_text=None):
         """Update the user list for the current page"""
-        search_text = self.search_entry.get().strip()
+        if search_text is None:
+            search_text = self.search_entry.get().strip()
         
         self.user_listbox.delete(0, tk.END)  # Always clear first
         

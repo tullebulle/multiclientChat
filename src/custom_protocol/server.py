@@ -102,15 +102,16 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
                     pattern_len = payload[0]
                     pattern = payload[1:pattern_len+1].decode('utf-8')
                     
-                    logging.debug(f"Listing accounts with pattern: {pattern}")
+                    logging.info(f"Listing accounts with pattern: {pattern}")
                     
                     # Get matching accounts using fnmatch for wildcard support
                     accounts = list(self.chat_server.users.keys())
+                    logging.info(f"Accounts: {accounts}")
                     matching_accounts = [
                         username for username in accounts 
                         if fnmatch.fnmatch(username.lower(), pattern.lower())
                     ]
-                    logging.debug(f"Matching accounts: {matching_accounts}")
+                    logging.info(f"Matching accounts: {matching_accounts}")
                     
                     # Format response: [num_accounts:1][len1:1][name1:N][len2:1][name2:N]...
                     response = bytes([len(matching_accounts)])
