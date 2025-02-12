@@ -45,6 +45,10 @@ class ChatGUI:
         # Setup logging
         logging.basicConfig(level=logging.DEBUG)
         
+        # Add refresh interval (in milliseconds)
+        self.refresh_interval = 1000  # 5 seconds
+        self.schedule_refresh()
+        
     def create_login_tab(self):
         """Create the login/registration tab"""
         frame = ttk.Frame(self.notebook)
@@ -245,6 +249,7 @@ class ChatGUI:
             self.search_entry.delete(0, tk.END)
             self.perform_search()
             self.refresh_messages()  # Initial message load
+            # No need to explicitly start refresh - it's already scheduled
         else:
             messagebox.showerror("Error", "Login failed")
             
@@ -354,12 +359,19 @@ class ChatGUI:
             self.refresh_messages()  # Refresh after sending
         
     def refresh_messages(self):
-        """Manually refresh messages"""
+        """Manually refresh messages while preserving selection"""
         if not self.client.current_user:
             return
         
         try:
             messages = self.client.get_messages(include_read=True)
+            
+            # Store currently selected items before refresh
+            selected_items = self.message_list.selection()
+            selected_contents = {
+                self.message_list.item(item)['values'][2]: item  # Using message content as key
+                for item in selected_items
+            }
             
             # Clear existing messages
             for item in self.message_list.get_children():
@@ -375,9 +387,10 @@ class ChatGUI:
             message_col_width = self.message_list.column('Message', 'width')
             chars_per_line = message_col_width // 7  # Approximate characters that fit per line
             
+            new_selections = []  # Store new item IDs to select
+            
             # Add messages to treeview with dynamic word wrapping
             for msg in recent_messages:
-                print(msg['timestamp'], type(msg['timestamp']))
                 if self.protocol == "custom":
                     timestamp = datetime.fromtimestamp(msg['timestamp'])
                 else:
@@ -411,6 +424,14 @@ class ChatGUI:
                     tags=('unread' if not msg['is_read'] else 'read',))
                 self.message_ids[item_id] = msg['id']
                 
+                # If this message was previously selected, add it to new selections
+                if wrapped_content in selected_contents:
+                    new_selections.append(item_id)
+            
+            # Restore selections
+            for item_id in new_selections:
+                self.message_list.selection_add(item_id)
+            
         except Exception as e:
             logging.error(f"Error refreshing messages: {e}")
             messagebox.showerror("Error", "Failed to refresh messages")
@@ -542,6 +563,13 @@ class ChatGUI:
         popup.transient(self.root)
         popup.grab_set()
         self.root.wait_window(popup)
+        
+    def schedule_refresh(self):
+        """Schedule the next auto-refresh"""
+        if self.client.current_user and self.notebook.tab(1)['state'] == 'normal':
+            self.refresh_messages()
+        # Schedule next refresh regardless of current state
+        self.root.after(self.refresh_interval, self.schedule_refresh)
         
     def run(self):
         """Start the GUI"""

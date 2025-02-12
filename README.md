@@ -60,3 +60,46 @@ Compare the test custom protocol and JSON protocol in terms of size and space:
 ```bash
 python src/compare_protocols.py
 ```
+
+## About the Application
+
+This multiclient chat application demonstrates different approaches to client-server communication protocols. It features:
+
+### Architecture
+- Client-server architecture with support for multiple simultaneous connections
+- Two protocol implementations: Custom Binary Protocol and JSON Protocol
+- Graphical user interface built with Tkinter
+- Thread-safe server implementation
+
+### Features
+- User account management (create, login, delete)
+- Real-time messaging between users
+- Message management (read/unread status, deletion)
+- User search with pagination
+- Auto-refresh for new messages
+- Secure password handling with SHA-256 hashing
+
+### Protocol Comparison
+- **Custom Binary Protocol**: Optimized for efficiency with minimal overhead
+  - Fixed-length headers
+  - Binary message format
+  - Compact data representation
+  
+- **JSON Protocol**: Focused on readability and flexibility
+  - Human-readable format
+  - Self-documenting structure
+  - Easy to debug and extend
+
+### Security Features
+- Password hashing using SHA-256
+- No plaintext password transmission
+- Session-based authentication
+- Secure message deletion
+
+### Performance Considerations
+- Efficient message delivery
+- Pagination for large datasets
+- Optimized refresh cycles
+- Thread-safe operations
+
+The application serves as a practical example of different protocol implementations and their trade-offs in a real-world messaging system.

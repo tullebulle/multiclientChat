@@ -28,7 +28,7 @@ class CustomChatRequestHandler(socketserver.BaseRequestHandler):
             try:
                 # Receive data from client
                 logging.debug("Waiting for client data...")
-                data = self.request.recv(1024)
+                data = self.request.recv(1024) # need to modify this to receive larger messages
                 if not data:
                     logging.info("Client closed connection")
                     break
