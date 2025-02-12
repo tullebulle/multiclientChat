@@ -134,6 +134,24 @@ class ChatGUI:
                    command=self.perform_search,
                    width=6).pack(side='left', padx=2)
         
+        # Add pagination controls
+        pagination_frame = ttk.Frame(search_frame)
+        pagination_frame.pack(fill='x', pady=2)
+        
+        self.prev_page_btn = ttk.Button(pagination_frame, text="←", 
+                                       command=self.prev_page, width=3)
+        self.prev_page_btn.pack(side='left', padx=2)
+        
+        self.page_label = ttk.Label(pagination_frame, text="Page 1")
+        self.page_label.pack(side='left', padx=5)
+        
+        self.next_page_btn = ttk.Button(pagination_frame, text="→", 
+                                       command=self.next_page, width=3)
+        self.next_page_btn.pack(side='left', padx=2)
+        
+        self.current_page = 1
+        self.page_size = 100  # Changed from 20 to 5 users per page
+        
         self.user_listbox = tk.Listbox(left_frame, width=20)
         self.user_listbox.pack(fill='y', expand=True)
         
@@ -363,14 +381,49 @@ class ChatGUI:
     def perform_search(self):
         """Handle search button click"""
         search_text = self.search_entry.get().strip()
+        self.current_page = 1  # Reset to first page on new search
+        self.update_user_list()
+
+    def update_user_list(self):
+        """Update the user list for the current page"""
+        search_text = self.search_entry.get().strip()
         
         self.user_listbox.delete(0, tk.END)  # Always clear first
         
-        accounts = self.client.list_accounts(search_text)  # No need for wildcards anymore
-        if accounts is not None:  # Check for None instead of truthiness
-            for account in sorted(accounts):
-                if account != self.client.current_user:  # Don't show current user
-                    self.user_listbox.insert(tk.END, account)
+        # Get all accounts
+        accounts = self.client.list_accounts(search_text)
+        
+        if accounts is not None:
+            # Filter out current user
+            filtered_accounts = [acc for acc in sorted(accounts) 
+                               if acc != self.client.current_user]
+            
+            # Calculate pagination
+            start_idx = (self.current_page - 1) * self.page_size
+            end_idx = start_idx + self.page_size
+            page_accounts = filtered_accounts[start_idx:end_idx]
+            
+            # Display current page
+            for account in page_accounts:
+                self.user_listbox.insert(tk.END, account)
+            
+            # Update page label
+            self.page_label.config(text=f"Page {self.current_page}")
+            
+            # Enable/disable pagination buttons
+            self.prev_page_btn.config(state='normal' if self.current_page > 1 else 'disabled')
+            self.next_page_btn.config(state='normal' if end_idx < len(filtered_accounts) else 'disabled')
+
+    def next_page(self):
+        """Go to next page of results"""
+        self.current_page += 1
+        self.update_user_list()
+
+    def prev_page(self):
+        """Go to previous page of results"""
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.update_user_list()
         
     def mark_selected_read(self):
         """Mark selected messages as read"""
