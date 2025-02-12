@@ -1,7 +1,27 @@
 """
 JSON Protocol Server Implementation
 
-Server implementation using the JSON protocol.
+This module implements the server-side handling of the JSON protocol. It provides
+a full-featured chat server using JSON messages for human-readable communication.
+
+Key Components:
+1. Request Handler:
+   - Processes individual client connections
+   - Parses JSON messages
+   - Manages user sessions
+   - Handles command execution
+
+2. Server Class:
+   - Manages multiple client connections
+   - Inherits from ThreadedTCPServer
+   - Maintains shared state
+
+Protocol Features:
+- JSON message format for readability
+- Maximum message size of 65539 bytes
+- Full command support
+- Descriptive error messages
+- Session-based authentication
 """
 
 import socketserver
@@ -18,18 +38,55 @@ logging.basicConfig(
 )
 
 class JSONChatRequestHandler(socketserver.BaseRequestHandler):
-    """Handler for JSON protocol chat clients"""
+    """
+    Handler for JSON protocol chat clients.
+    
+    This class processes individual client connections using the JSON protocol.
+    It handles message parsing, command execution, and maintains client state
+    throughout the connection lifetime.
+    
+    Attributes:
+        chat_server: Reference to the shared chat server instance
+        current_user: Currently authenticated username (or None)
+        request: Client socket connection
+        
+    The handler maintains session state and enforces authentication
+    requirements for protected commands.
+    """
     
     def setup(self):
-        """Get reference to the shared chat server instance"""
+        """
+        Initialize the request handler.
+        
+        Called when a new client connects. Sets up the handler's initial state
+        and gets a reference to the shared chat server instance.
+        """
         self.chat_server = self.server.chat_server
         self.current_user = None
     
     def handle(self):
-        """Handle incoming connections"""
+        """
+        Handle incoming client connection.
+        
+        Main processing loop for client connections. Continuously receives
+        and processes JSON messages until the connection is closed.
+        
+        Message Flow:
+        1. Receive raw data (up to max message size)
+        2. Parse JSON message
+        3. Validate protocol format
+        4. Process command
+        5. Send JSON response
+        
+        Authentication is required for all commands except CREATE_ACCOUNT
+        and AUTH. Messages exceeding the size limit are rejected.
+        """
         while True:
             try:
-                data = self.request.recv(4096)
+                # Maximum message size for JSON protocol
+                # Using same size as custom protocol for consistency
+                max_message_size = 65539  # 4 byte header + 65535 byte payload
+                data = self.request.recv(max_message_size)
                 if not data:
                     break
                     

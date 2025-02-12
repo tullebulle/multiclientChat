@@ -1,7 +1,21 @@
 """
 Custom Protocol Chat Client
 
-A command-line client using the custom binary protocol.
+A command-line client implementing the custom binary protocol for chat communication.
+This client provides a complete interface to the chat server's functionality using
+a compact binary protocol for efficiency.
+
+Features:
+- User authentication and account management
+- Real-time messaging
+- Message status tracking (read/unread)
+- Secure password handling with SHA-256
+- Binary protocol for efficient communication
+
+The protocol uses a compact binary format with:
+- Fixed-size headers (4 bytes)
+- Length-prefixed fields
+- Command-based message structure
 """
 
 import socket
@@ -21,10 +35,34 @@ logging.basicConfig(
 )
 
 class CustomChatClient:
-    """Interactive chat client using custom binary protocol"""
+    """
+    Interactive chat client using custom binary protocol.
+    
+    This client implements the custom binary protocol for efficient communication
+    with the chat server. It handles all aspects of the protocol including message
+    formatting, command encoding, and secure password handling.
+    
+    Attributes:
+        host (str): Server hostname or IP address
+        port (int): Server port number
+        sock (socket): TCP socket connection to server
+        current_user (str): Currently logged in username, if any
+        
+    The client maintains a single TCP connection to the server and uses
+    a binary protocol for all communications.
+    """
     
     def __init__(self, host='localhost', port=9999):
-        """Initialize the chat client"""
+        """
+        Initialize the chat client.
+        
+        Args:
+            host (str): Server hostname or IP address
+            port (int): Server port number
+            
+        The client starts in a disconnected state. Use connect() to
+        establish the server connection.
+        """
         self.host = host
         self.port = port
         self.sock = None
@@ -32,10 +70,17 @@ class CustomChatClient:
         logging.debug(f"Initialized client for {host}:{port}")
         
     def connect(self, server_address=None):
-        """Connect to the chat server
+        """
+        Connect to the chat server.
         
         Args:
             server_address: Optional tuple of (host, port). If not provided, uses defaults.
+            
+        Returns:
+            bool: True if connection successful, False otherwise
+            
+        Establishes a TCP connection to the server. If server_address is provided,
+        updates the stored host and port before connecting.
         """
         if server_address:
             self.host, self.port = server_address

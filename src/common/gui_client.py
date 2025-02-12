@@ -1,7 +1,20 @@
 """
 GUI Client for Custom Protocol Chat
 
-A graphical interface using tkinter for the chat client.
+A graphical interface using tkinter for the chat client. This module provides a complete
+GUI implementation supporting both Custom Binary and JSON protocols.
+
+Key Features:
+- User authentication and account management
+- Real-time messaging with auto-refresh
+- Message status tracking (read/unread)
+- User search with pagination
+- Message deletion and read status management
+- Dynamic message wrapping and display
+
+The GUI is organized into two main tabs:
+1. Login/Account Management
+2. Chat Interface with user list and messages
 """
 
 import tkinter as tk
@@ -14,7 +27,38 @@ from ..json_protocol.client import JSONChatClient
 import argparse
 
 class ChatGUI:
-    def __init__(self, host="localhost", port=9999, protocol = "custom"):
+    """
+    Main GUI class for the chat application.
+    
+    This class implements a complete chat interface using tkinter, supporting both
+    Custom Binary and JSON protocols. It provides a two-tab interface for login/account
+    management and chat functionality.
+    
+    Attributes:
+        client: The protocol client (either CustomChatClient or JSONChatClient)
+        root: The main tkinter window
+        notebook: Tab container for login and chat interfaces
+        current_page: Current page number for user list pagination
+        page_size: Number of users to display per page
+        refresh_interval: Time between auto-refresh attempts (milliseconds)
+        message_ids: Dictionary mapping treeview items to message IDs
+        
+    The GUI automatically refreshes messages for logged-in users and maintains
+    message selection state during refreshes.
+    """
+    
+    def __init__(self, host="localhost", port=9999, protocol="custom"):
+        """
+        Initialize the chat GUI.
+        
+        Args:
+            host: Server hostname or IP (default: "localhost")
+            port: Server port number (default: 9999)
+            protocol: Protocol to use ("custom" or "json", default: "custom")
+            
+        The constructor sets up the main window, initializes the appropriate protocol
+        client, and creates the tab-based interface.
+        """
         if protocol == "custom":
             self.client = CustomChatClient(host=host, port=port)
         else:
@@ -50,7 +94,20 @@ class ChatGUI:
         self.schedule_refresh()
         
     def create_login_tab(self):
-        """Create the login/registration tab"""
+        """
+        Create the login/registration tab.
+        
+        This tab contains three sections:
+        1. Login - For existing user authentication
+        2. Create Account - For new user registration
+        3. Delete Account - For account removal
+        
+        Each section contains username/password fields and appropriate action buttons.
+        The tab is initially active while the chat tab is disabled until login.
+        
+        Returns:
+            ttk.Frame: The constructed login tab frame
+        """
         frame = ttk.Frame(self.notebook)
         self.notebook.add(frame, text='Login')
         
