@@ -2,5 +2,12 @@
 # Python cache files
 __pycache__/
 *.py[cod]
-*$py.class__pycache__/
-*.pyc
+*$py.class
+.pytest_cache/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.env
+.venv
