@@ -355,7 +355,11 @@ class ChatGUI:
             
             # Add messages to treeview with dynamic word wrapping
             for msg in recent_messages:
-                timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%H:%M:%S')
+                print(msg['timestamp'], type(msg['timestamp']))
+                if self.protocol == "custom":
+                    timestamp = datetime.fromtimestamp(msg['timestamp'])
+                else:
+                    timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%H:%M:%S')
                 content = msg['content']
                 
                 # Word wrap the content

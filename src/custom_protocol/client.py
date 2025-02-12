@@ -253,7 +253,7 @@ class CustomChatClient:
                         'id': msg_id,
                         'sender': sender,
                         'content': content,
-                        'timestamp': datetime.fromtimestamp(timestamp),
+                        'timestamp': timestamp,
                         'is_read': is_read
                     })
                 
