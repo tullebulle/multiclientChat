@@ -1,8 +1,27 @@
 """
 Common Chat Server Functionality
 
-Base classes and shared functionality for the chat server,
-independent of the protocol used.
+This module provides the core server functionality shared between different protocol
+implementations. It includes:
+
+1. User Management:
+   - Account creation and authentication
+   - Password hashing and verification
+   - Online status tracking
+
+2. Message Handling:
+   - Message storage and retrieval
+   - Read/unread status management
+   - Message deletion
+   - Thread-safe operations
+
+3. Server Infrastructure:
+   - Base TCP server implementation
+   - Thread management for multiple clients
+   - Shared state handling
+
+The module is protocol-agnostic and serves as the foundation for both Custom Binary
+and JSON protocol implementations.
 """
 
 import socketserver
@@ -26,12 +45,15 @@ class User:
     """
     Represents a user in the chat system.
     
+    This class maintains user state including authentication details and message status.
+    The password is stored as a hash with a unique salt for security.
+    
     Attributes:
-        username: The user's unique username
-        password_hash: Hashed version of the user's password
-        salt: Random salt used in password hashing
-        is_online: Current user's connection status
-        unread_messages: Number of unread messages for the user
+        username: The user's unique identifier
+        password_hash: Securely hashed version of the user's password
+        salt: Random bytes used in password hashing for added security
+        is_online: Current connection status of the user
+        unread_messages: Count of unread messages for the user
     """
     username: str
     password_hash: bytes
@@ -44,11 +66,14 @@ class Message:
     """
     Represents a chat message.
     
+    Each message has a unique ID and tracks its read status. Messages maintain
+    their sender/recipient information and timestamp for ordering.
+    
     Attributes:
         id: Unique message identifier
-        sender: Username of sender
-        recipient: Username of recipient
-        content: Message content
+        sender: Username of the message sender
+        recipient: Username of the intended recipient
+        content: The actual message text
         timestamp: When the message was sent
         is_read: Whether the recipient has read the message
     """
@@ -63,12 +88,16 @@ class ChatServer:
     """
     Main server class handling all chat operations.
     
+    This class manages all server-side chat functionality including user accounts,
+    message handling, and thread synchronization. It maintains thread-safe access
+    to shared resources using locks.
+    
     Attributes:
-        users (Dict[str, User]): Dictionary of registered users
-        online_users (Set[str]): Set of currently connected usernames
-        messages (List[Message]): List of all messages in the chat system
-        next_message_id (int): Next available message ID
-        message_lock (threading.Lock): Lock for thread-safe message handling
+        users: Dictionary mapping usernames to User objects
+        online_users: Set of currently connected usernames
+        messages: List of all messages in the system
+        next_message_id: Counter for generating unique message IDs
+        message_lock: Lock for thread-safe message operations
     """
     
     def __init__(self):

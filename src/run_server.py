@@ -1,7 +1,22 @@
 """
 Chat Server Runner
 
-Starts the chat server with the specified protocol.
+This module provides the entry point for starting the chat server with the
+specified protocol implementation. It supports both the Custom Binary and
+JSON protocols through command-line configuration.
+
+Features:
+- Protocol selection (JSON/Custom)
+- Server configuration (host/port)
+- Graceful shutdown handling
+- Signal handling (Ctrl+C)
+- Logging configuration
+
+Usage:
+    python run_server.py [--host HOST] [--port PORT] [--protocol {json,custom}]
+
+Example:
+    python run_server.py --host localhost --port 9999 --protocol json
 """
 
 import argparse
@@ -19,20 +34,52 @@ from src.json_protocol.server import JSONChatServer
 from src.custom_protocol.server import CustomChatServer
 
 def shutdown_server(server):
-    """Shutdown server gracefully"""
+    """
+    Shutdown server gracefully.
+    
+    Args:
+        server: The server instance to shut down
+        
+    Performs a clean shutdown by:
+    1. Stopping the server from accepting new connections
+    2. Closing existing connections
+    3. Releasing server resources
+    """
     logging.info("Shutting down server...")
     server.shutdown()
     server.server_close()
 
 def signal_handler(sig, frame):
-    """Handle Ctrl+C gracefully"""
+    """
+    Handle Ctrl+C gracefully.
+    
+    Args:
+        sig: Signal number
+        frame: Current stack frame
+        
+    Raises KeyboardInterrupt to trigger the cleanup in main()
+    instead of calling sys.exit() directly, allowing for proper cleanup.
+    """
     print("\nShutting down server...")
     # We can't call sys.exit() directly as it doesn't allow cleanup
     # Instead, we'll raise KeyboardInterrupt to trigger the cleanup in main()
     raise KeyboardInterrupt()
 
 def main():
-    """Main entry point for the chat server"""
+    """
+    Main entry point for the chat server.
+    
+    Parses command-line arguments, initializes the appropriate server type,
+    and handles the server lifecycle including startup and shutdown.
+    
+    Command-line Arguments:
+        --host: Server hostname or IP (default: localhost)
+        --port: Server port number (default: 9999)
+        --protocol: Protocol to use (json/custom, default: custom)
+        
+    The server runs until interrupted by Ctrl+C, at which point it performs
+    a graceful shutdown.
+    """
     parser = argparse.ArgumentParser(description="Chat server")
     parser.add_argument("--host", default="localhost", help="Server host")
     parser.add_argument("--port", type=int, default=9999, help="Server port")
@@ -63,7 +110,7 @@ def main():
             server = JSONChatServer((args.host, args.port))
             logging.info(f"JSON protocol server starting on {args.host}:{args.port}")
         
-        # Start all servers in separate threads
+        # Start server in separate thread
         thread = threading.Thread(target=server.serve_forever)
         thread.daemon = True
         thread.start()

@@ -1,7 +1,26 @@
 """
 Custom Protocol Server Implementation
 
-Server implementation using the custom binary protocol.
+This module implements the server-side handling of the custom binary protocol.
+It provides a high-performance, thread-safe server capable of handling multiple
+simultaneous client connections using a compact binary protocol.
+
+Key Components:
+1. Request Handler:
+   - Processes individual client connections
+   - Implements protocol message handling
+   - Manages user sessions and authentication
+
+2. Server Class:
+   - Manages multiple client connections
+   - Inherits from ThreadedTCPServer for concurrent handling
+   - Maintains shared state across connections
+
+Protocol Features:
+- Fixed-size headers (4 bytes)
+- Binary message format for efficiency
+- Maximum message size of 65539 bytes
+- Secure password handling with hashing
 """
 
 import socketserver
@@ -13,15 +32,48 @@ from datetime import datetime
 import fnmatch
 
 class CustomChatRequestHandler(socketserver.BaseRequestHandler):
-    """Handler for custom protocol chat clients"""
+    """
+    Handler for custom protocol chat clients.
+    
+    This class processes individual client connections using the custom binary
+    protocol. It handles message parsing, command execution, and maintains
+    client state throughout the connection lifetime.
+    
+    Attributes:
+        chat_server: Reference to the shared chat server instance
+        current_user: Currently authenticated username (or None)
+        request: Client socket connection
+        
+    The handler maintains session state and enforces authentication
+    requirements for protected commands.
+    """
     
     def setup(self):
-        """Get reference to the shared chat server instance"""
+        """
+        Initialize the request handler.
+        
+        Called when a new client connects. Sets up the handler's initial state
+        and gets a reference to the shared chat server instance.
+        """
         self.chat_server = self.server.chat_server
         self.current_user = None
     
     def handle(self):
-        """Handle incoming client connection."""
+        """
+        Handle incoming client connection.
+        
+        Main processing loop for client connections. Continuously receives
+        and processes messages until the connection is closed.
+        
+        Message Processing:
+        1. Receive raw data (up to max message size)
+        2. Decode protocol message
+        3. Process command
+        4. Send response
+        
+        The handler supports the maximum protocol message size of
+        65539 bytes (4 byte header + 65535 byte payload).
+        """
         logging.info(f"New custom protocol client connection from {self.client_address}")
         
         while True:

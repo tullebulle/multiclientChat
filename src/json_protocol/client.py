@@ -1,7 +1,21 @@
 """
 JSON Protocol Chat Client
 
-A command-line client using the JSON protocol.
+A command-line client using the JSON protocol for chat communication. This client
+implements a human-readable protocol format while maintaining full chat functionality.
+
+Features:
+- JSON-based message format for readability
+- Full chat functionality (messaging, accounts, status)
+- Secure password handling with SHA-256 hashing
+- Error handling with descriptive messages
+- Session-based authentication
+
+Protocol Structure:
+- Messages are JSON objects
+- Each message includes version, command, and payload
+- Responses include status and relevant data
+- Error responses include descriptive messages
 """
 
 import socket
@@ -15,20 +29,67 @@ from . import protocol
 import hashlib
 
 class JSONChatClient:
-    """Interactive chat client using JSON protocol"""
+    """
+    Interactive chat client using JSON protocol.
+    
+    This client implements the JSON-based protocol for human-readable
+    communication with the chat server. It handles message formatting,
+    command processing, and secure password handling.
+    
+    Attributes:
+        host (str): Server hostname or IP address
+        port (int): Server port number
+        sock (socket): TCP socket connection to server
+        current_user (str): Currently logged in username, if any
+        
+    The client maintains a single TCP connection and uses JSON formatting
+    for all message exchanges.
+    """
     
     def __init__(self, host: str = 'localhost', port: int = 9998):
-        """Initialize the chat client"""
+        """
+        Initialize the chat client.
+        
+        Args:
+            host: Server hostname or IP address
+            port: Server port number
+            
+        The client starts in a disconnected state. Use connect() to
+        establish the server connection.
+        """
         self.host = host
         self.port = port
         self.sock = None
         self.current_user = None
         
-    def connect(self, server_address=None):
-        """Connect to the chat server
+    def _hash_password(self, password: str) -> str:
+        """
+        Hash password using SHA-256.
         
         Args:
-            server_address: Optional tuple of (host, port). If not provided, uses defaults.
+            password: Plain text password
+            
+        Returns:
+            str: Hexadecimal representation of password hash
+            
+        Uses SHA-256 for consistent hashing across the application.
+        The hash is transmitted instead of plain text passwords.
+        """
+        return hashlib.sha256(password.encode()).hexdigest()
+        
+    def connect(self, server_address=None):
+        """
+        Connect to the chat server.
+        
+        Args:
+            server_address: Optional tuple of (host, port). If not provided,
+                          uses defaults.
+            
+        Returns:
+            bool: True if connection successful, False otherwise
+            
+        Establishes a TCP connection to the server. If server_address is
+        provided, updates the stored host and port before connecting.
         """
         if server_address:
             self.host, self.port = server_address
@@ -102,10 +163,6 @@ class JSONChatClient:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON format: {e}")
 
-    def _hash_password(self, password: str) -> str:
-        """Hash password using SHA-256"""
-        return hashlib.sha256(password.encode()).hexdigest()
-    
     def create_account(self, username: str, password: str) -> bool:
         """Create a new account
         
