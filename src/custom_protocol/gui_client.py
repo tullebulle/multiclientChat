@@ -13,8 +13,8 @@ from .client import CustomChatClient
 import argparse
 
 class ChatGUI:
-    def __init__(self, host="localhost"):
-        self.client = CustomChatClient(host=host, port=9999)
+    def __init__(self, host="localhost", port=9999):
+        self.client = CustomChatClient(host=host, port=port)
         if not self.client.connect():
             messagebox.showerror("Error", "Could not connect to server!")
             return

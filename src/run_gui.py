@@ -18,6 +18,7 @@ from src.json_protocol.gui_client import JSONChatGUIClient
 def main():
     parser = argparse.ArgumentParser(description="Chat GUI client")
     parser.add_argument("--host", default="localhost", help="Server host")
+    parser.add_argument("--port", default="9999", help="Server port")
     parser.add_argument(
         "--protocol",
         choices=["json", "custom"],
@@ -28,9 +29,9 @@ def main():
     
     try:
         if args.protocol == "custom":
-            client = ChatGUI(args.host)
+            client = ChatGUI(args.host, args.port)
         else:
-            client = JSONChatGUIClient(args.host)
+            client = JSONChatGUIClient(args.host, args.port)
         client.run()
         
     except KeyboardInterrupt:

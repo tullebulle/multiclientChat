@@ -44,13 +44,16 @@ def main():
         help="Protocol to use (json, custom, or both)"
     )
     
-    # Remove json-port argument since it's always 9998
-    parser.add_argument(
-        "--custom-port",
-        type=int,
-        default=9999,
-        help="Port for custom protocol when running both"
-    )
+    # TODO: Fix both server port problem
+
+    # # Remove json-port argument since it's always 9998
+    # parser.add_argument(
+    #     "--custom-port",
+    #     type=int,
+    #     default=9999,
+    #     help="Port for custom protocol when running both"
+    # )
+
     args = parser.parse_args()
     
     # Set up logging
@@ -67,16 +70,14 @@ def main():
     
     try:
         if args.protocol in ["custom", "both"]:
-            custom_port = 9999
-            custom_server = CustomChatServer((args.host, custom_port))
+            custom_server = CustomChatServer((args.host, args.port))
             servers.append(custom_server)
-            logging.info(f"Custom protocol server starting on {args.host}:{custom_port}")
+            logging.info(f"Custom protocol server starting on {args.host}:{args.port}")
             
         if args.protocol in ["json", "both"]:
-            # Always use port 9998 for JSON
-            json_server = JSONChatServer((args.host, 9998))
+            json_server = JSONChatServer((args.host, args.port))
             servers.append(json_server)
-            logging.info(f"JSON protocol server starting on {args.host}:9998")
+            logging.info(f"JSON protocol server starting on {args.host}:{args.port}")
         
         # Start all servers in separate threads
         for server in servers:
@@ -102,6 +103,10 @@ def main():
     except Exception as e:
         logging.error(f"Error running server: {e}")
         shutdown_servers(servers)
+        # Wait for threads to finish
+        for thread in server_threads:
+            thread.join(timeout=5.0)
+        logging.info("Server shutdown complete")
         sys.exit(1)
 
 if __name__ == "__main__":
