@@ -61,54 +61,85 @@ class GRPCChatClient:
             self.channel.close()
             
     def _hash_password(self, password: str) -> str:
-        """Hash password using SHA-256"""
-        return hashlib.sha256(password.encode()).hexdigest()
+        """
+        Hash password using SHA-256.
+        Returns hex string representation of hash.
+        """
+        hasher = hashlib.sha256()
+        hasher.update(password.encode('utf-8'))
+        return hasher.hexdigest()  # Return hex string instead of raw bytes
         
     def create_account(self, username: str, password: str) -> tuple[bool, str]:
         """
-        Create a new account.
+        Create a new user account.
         
         Args:
-            username: Desired username
-            password: Password for the account
+            username: Username for new account
+            password: Password for new account
             
         Returns:
             tuple[bool, str]: (success, error_message)
         """
         try:
+            # Hash the password
             password_hash = self._hash_password(password)
+            
+            # Create request
             request = chat_pb2.CreateAccountRequest(
                 username=username,
                 password_hash=password_hash
             )
-            response = self.stub.CreateAccount(request)
-            return response.success, response.error_message
-        except grpc.RpcError as e:
-            return False, str(e)
             
-    def login(self, username: str, password: str) -> tuple[bool, str]:
+            # Send request
+            response = self.stub.CreateAccount(request)
+            
+            # Check response
+            if not response.success:
+                logging.error(f"Failed to create account: {response.error_message}")
+                return False, response.error_message
+                
+            return response.success, response.error_message
+            
+        except grpc.RpcError as e:
+            error_msg = str(e)
+            logging.error(f"Error creating account: {error_msg}")
+            return False, error_msg
+            
+    def login(self, username: str, password: str) -> bool:
         """
-        Log in to an existing account.
+        Login with username and password.
         
         Args:
-            username: Username
-            password: Password
+            username: Username to login with
+            password: Password to login with
             
         Returns:
-            tuple[bool, str]: (success, error_message)
+            bool: True if login successful, False otherwise
         """
         try:
+            # Hash the password
             password_hash = self._hash_password(password)
+            
+            # Create request
             request = chat_pb2.AuthRequest(
                 username=username,
                 password_hash=password_hash
             )
+            
+            # Send request
             response = self.stub.Authenticate(request)
+            
             if response.success:
                 self.current_user = username
-            return response.success, response.error_message
+                logging.info(f"Logged in as: {username}")
+                return True
+                
+            logging.error(f"Login failed: {response.error_message}")
+            return False
+            
         except grpc.RpcError as e:
-            return False, str(e)
+            logging.error(f"Login error: {e}")
+            return False
             
     def send_message(self, recipient: str, content: str) -> tuple[int, str]:
         """
@@ -124,8 +155,13 @@ class GRPCChatClient:
         if not self.current_user:
             return 0, "Not authenticated"
             
+        # Add input validation
+        if not recipient:
+            return 0, "Recipient cannot be empty"
+        if not content:
+            return 0, "Message content cannot be empty"
+            
         try:
-            # Add authentication metadata
             metadata = [('username', self.current_user)]
             request = chat_pb2.SendMessageRequest(
                 recipient=recipient,
@@ -139,7 +175,7 @@ class GRPCChatClient:
         except grpc.RpcError as e:
             return 0, str(e)
             
-    def get_messages(self, include_read: bool = True) -> tuple[list, str]:
+    def get_messages(self, include_read: bool = True) -> list[dict]:
         """
         Get messages for the current user.
         
@@ -147,10 +183,10 @@ class GRPCChatClient:
             include_read: Whether to include read messages
             
         Returns:
-            tuple[list, str]: (messages, error_message)
+            list[dict]: List of message dictionaries
         """
         if not self.current_user:
-            return [], "Not authenticated"
+            return []
             
         try:
             metadata = [('username', self.current_user)]
@@ -161,16 +197,145 @@ class GRPCChatClient:
                 request,
                 metadata=metadata
             )
-            messages = [
-                {
-                    'id': msg.id,
-                    'sender': msg.sender,
-                    'content': msg.content,
-                    'timestamp': msg.timestamp,
-                    'is_read': msg.is_read
-                }
-                for msg in response.messages
-            ]
-            return messages, response.error_message
+            
+            # Convert protobuf messages to dictionaries
+            messages = []
+            for msg in response.messages:
+                if include_read or not msg.is_read:
+                    messages.append({
+                        'id': msg.id,
+                        'sender': msg.sender,
+                        'recipient': msg.recipient,
+                        'content': msg.content,
+                        'timestamp': int(msg.timestamp),  # Ensure timestamp is an integer
+                        'is_read': msg.is_read
+                    })
+            return messages
         except grpc.RpcError as e:
-            return [], str(e)
+            logging.error(f"Error getting messages: {e}")
+            return []
+
+    def mark_read(self, message_ids: list[int]) -> tuple[bool, str]:
+        """
+        Mark messages as read.
+        
+        Args:
+            message_ids: List of message IDs to mark as read
+            
+        Returns:
+            tuple[bool, str]: (success, error_message)
+        """
+        if not self.current_user:
+            return False, "Not authenticated"
+            
+        try:
+            metadata = [('username', self.current_user)]
+            request = chat_pb2.MarkReadRequest(
+                message_ids=message_ids
+            )
+            response = self.stub.MarkRead(
+                request,
+                metadata=metadata
+            )
+            return response.success, response.error_message
+        except grpc.RpcError as e:
+            return False, str(e)
+
+    def delete_messages(self, message_ids: list[int]) -> tuple[bool, str]:
+        """
+        Delete messages.
+        
+        Args:
+            message_ids: List of message IDs to delete
+            
+        Returns:
+            tuple[bool, str]: (success, error_message)
+        """
+        if not self.current_user:
+            return False, "Not authenticated"
+            
+        try:
+            metadata = [('username', self.current_user)]
+            request = chat_pb2.DeleteMessagesRequest(
+                message_ids=message_ids
+            )
+            response = self.stub.DeleteMessages(
+                request,
+                metadata=metadata
+            )
+            return response.success, response.error_message
+        except grpc.RpcError as e:
+            return False, str(e)
+
+    def list_accounts(self, pattern: str = "*") -> list[str]:
+        """
+        List user accounts matching a pattern.
+        
+        Args:
+            pattern: Pattern to match usernames against
+            
+        Returns:
+            list[str]: List of usernames (empty list if error)
+        """
+        try:
+            metadata = [('username', self.current_user)] if self.current_user else []
+            request = chat_pb2.ListAccountsRequest(
+                pattern=pattern
+            )
+            response = self.stub.ListAccounts(
+                request,
+                metadata=metadata
+            )
+            # Convert protobuf repeated field to list and return just the usernames
+            return list(response.usernames)
+        except grpc.RpcError as e:
+            logging.error(f"Error listing accounts: {e}")
+            return []  # Return empty list on error
+
+    def delete_account(self, username: str, password: str) -> bool:
+        """
+        Delete a user account.
+        
+        Args:
+            username: Username of account to delete
+            password: Password for account
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            logging.info(f"Attempting to delete account for user: {username}")
+            
+            # Hash the password
+            password_hash = self._hash_password(password)
+            logging.debug(f"Generated password hash for deletion request")
+            
+            # Create request
+            request = chat_pb2.DeleteAccountRequest(
+                username=username,
+                password_hash=password_hash
+            )
+            
+            # Send request with metadata if logged in
+            metadata = [('username', self.current_user)] if self.current_user else []
+            logging.debug(f"Sending delete request with metadata: {metadata}")
+            
+            response = self.stub.DeleteAccount(request, metadata=metadata)
+            
+            if response.success:
+                logging.info(f"Successfully deleted account: {username}")
+                # If we're deleting our own account, clear current user
+                if self.current_user == username:
+                    self.current_user = None
+                    logging.debug("Cleared current user after self-deletion")
+                return True
+            else:
+                logging.error(f"Failed to delete account: {response.error_message}")
+                return False
+            
+        except grpc.RpcError as e:
+            logging.error(f"gRPC error while deleting account: {str(e)}")
+            return False
+        except Exception as e:
+            logging.error(f"Unexpected error while deleting account: {str(e)}", exc_info=True)
+            return False

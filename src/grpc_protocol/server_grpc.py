@@ -26,27 +26,28 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
     """
     
     def __init__(self):
-        self.chat_server = ChatServer()
+        self.messages = []  # Initialize empty messages list
+        self.accounts = {}  # Store accounts directly in the servicer
     
     def CreateAccount(self, request, context):
-        """
-        Create a new user account.
-        
-        Args:
-            request: CreateAccountRequest with username and password_hash
-            context: gRPC context
-            
-        Returns:
-            CreateAccountResponse with success status and error message if any
-        """
+        """Create a new user account"""
         try:
-            success = self.chat_server.create_account(
-                request.username,
-                request.password_hash
-            )
+            # Check if username already exists (case-insensitive)
+            username_lower = request.username.lower()
+            for existing_username in self.accounts.keys():
+                if existing_username.lower() == username_lower:
+                    return chat_pb2.CreateAccountResponse(
+                        success=False,
+                        error_message="Username already exists"
+                    )
+            
+            # Create new account
+            self.accounts[request.username] = request.password_hash
+            logging.info(f"Created new account for user: {request.username}")
+            
             return chat_pb2.CreateAccountResponse(
-                success=success,
-                error_message="" if success else "Username already exists"
+                success=True,
+                error_message=""
             )
         except Exception as e:
             return chat_pb2.CreateAccountResponse(
@@ -55,64 +56,233 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             )
     
     def Authenticate(self, request, context):
-        """
-        Authenticate a user.
-        
-        Args:
-            request: AuthRequest with username and password_hash
-            context: gRPC context
-            
-        Returns:
-            AuthResponse with success status and error message if any
-        """
+        """Authenticate a user"""
         try:
-            success = self.chat_server.authenticate(
-                request.username,
-                request.password_hash
-            )
+            username = request.username
+            password_hash = request.password_hash
+            
+            # Check if user exists and password matches
+            if (username in self.accounts and 
+                self.accounts[username] == password_hash):
+                logging.info(f"User authenticated successfully: {username}")
+                return chat_pb2.AuthResponse(
+                    success=True,
+                    error_message=""
+                )
+                
+            logging.warning(f"Failed authentication attempt for user: {username}")
             return chat_pb2.AuthResponse(
-                success=success,
-                error_message="" if success else "Invalid credentials"
+                success=False,
+                error_message="Invalid username or password"
             )
+            
         except Exception as e:
+            logging.error(f"Authentication error: {e}")
             return chat_pb2.AuthResponse(
                 success=False,
                 error_message=str(e)
             )
 
     def SendMessage(self, request, context):
-        """
-        Send a message to another user.
-        
-        Args:
-            request: SendMessageRequest with recipient and content
-            context: gRPC context
+        """Send a message to another user"""
+        username = self._get_username_from_metadata(context)
+        if not username:
+            return chat_pb2.SendMessageResponse(
+                message_id=0,
+                error_message="Not authenticated"
+            )
             
-        Returns:
-            SendMessageResponse with message ID and error message if any
-        """
         try:
-            # Get username from metadata
-            metadata = dict(context.invocation_metadata())
-            username = metadata.get('username')
-            if not username:
+            # Verify recipient exists
+            if request.recipient not in self.accounts:
                 return chat_pb2.SendMessageResponse(
                     message_id=0,
-                    error_message="Not authenticated"
+                    error_message="Recipient does not exist"
                 )
             
-            message = self.chat_server.send_message(
-                username,
-                request.recipient,
-                request.content
+            # Create and store the message
+            msg_id = len(self.messages) + 1  # Simple ID generation
+            msg = chat_pb2.Message(
+                id=msg_id,
+                sender=username,
+                recipient=request.recipient,
+                content=request.content,
+                timestamp=int(time.time()),
+                is_read=False
             )
+            self.messages.append(msg)
+            
             return chat_pb2.SendMessageResponse(
-                message_id=message.id,
+                message_id=msg_id,
                 error_message=""
             )
         except Exception as e:
             return chat_pb2.SendMessageResponse(
                 message_id=0,
+                error_message=str(e)
+            )
+
+    def GetMessages(self, request: chat_pb2.GetMessagesRequest, context: grpc.ServicerContext) -> chat_pb2.GetMessagesResponse:
+        """
+        Get messages for the authenticated user.
+        """
+        username = self._get_username_from_metadata(context)
+        if not username:
+            return chat_pb2.GetMessagesResponse(
+                messages=[],
+                error_message="Not authenticated"
+            )
+
+        # Get messages for user
+        messages = []
+        for msg in self.messages:
+            if msg.recipient == username:
+                if request.include_read or not msg.is_read:
+                    messages.append(msg)
+
+        return chat_pb2.GetMessagesResponse(
+            messages=messages,
+            error_message=""
+        )
+
+    def _get_username_from_metadata(self, context: grpc.ServicerContext) -> str:
+        """
+        Extract username from the request metadata.
+        
+        Args:
+            context: gRPC context containing metadata
+            
+        Returns:
+            str: Username from metadata or empty string if not found
+        """
+        metadata = dict(context.invocation_metadata())
+        return metadata.get('username', '')
+
+    def MarkRead(self, request: chat_pb2.MarkReadRequest, context: grpc.ServicerContext) -> chat_pb2.MarkReadResponse:
+        """Mark messages as read"""
+        username = self._get_username_from_metadata(context)
+        if not username:
+            return chat_pb2.MarkReadResponse(
+                success=False,
+                error_message="Not authenticated"
+            )
+        
+        try:
+            # Mark messages as read if they belong to the user
+            for message in self.messages:
+                if message.id in request.message_ids and message.recipient == username:
+                    message.is_read = True
+            
+            return chat_pb2.MarkReadResponse(
+                success=True,
+                error_message=""
+            )
+        except Exception as e:
+            return chat_pb2.MarkReadResponse(
+                success=False,
+                error_message=str(e)
+            )
+
+    def DeleteMessages(self, request: chat_pb2.DeleteMessagesRequest, context: grpc.ServicerContext) -> chat_pb2.DeleteMessagesResponse:
+        """Delete messages"""
+        username = self._get_username_from_metadata(context)
+        if not username:
+            return chat_pb2.DeleteMessagesResponse(
+                success=False,
+                error_message="Not authenticated"
+            )
+        
+        try:
+            # Create a new list without the deleted messages
+            original_length = len(self.messages)
+            self.messages = [
+                msg for msg in self.messages 
+                if msg.id not in request.message_ids or msg.recipient != username
+            ]
+            
+            # Verify messages were actually deleted
+            if len(self.messages) == original_length:
+                return chat_pb2.DeleteMessagesResponse(
+                    success=False,
+                    error_message="No messages found to delete"
+                )
+            
+            return chat_pb2.DeleteMessagesResponse(
+                success=True,
+                error_message=""
+            )
+        except Exception as e:
+            return chat_pb2.DeleteMessagesResponse(
+                success=False,
+                error_message=str(e)
+            )
+
+    def ListAccounts(self, request: chat_pb2.ListAccountsRequest, context: grpc.ServicerContext) -> chat_pb2.ListAccountsResponse:
+        """List user accounts matching pattern"""
+        try:
+            usernames = list(self.accounts.keys())
+            
+            # Filter by pattern if provided
+            if request.pattern and request.pattern != "*":
+                usernames = [u for u in usernames if request.pattern in u]
+            
+            return chat_pb2.ListAccountsResponse(
+                usernames=usernames,
+                error_message=""
+            )
+        except Exception as e:
+            return chat_pb2.ListAccountsResponse(
+                usernames=[],
+                error_message=str(e)
+            )
+
+    def DeleteAccount(self, request: chat_pb2.DeleteAccountRequest, context: grpc.ServicerContext) -> chat_pb2.DeleteAccountResponse:
+        """Delete a user account"""
+        try:
+            username = request.username
+            password_hash = request.password_hash
+            logging.info(f"Received delete account request for user: {username}")
+            
+            # Log current accounts for debugging
+            logging.debug(f"Current accounts: {list(self.accounts.keys())}")
+            
+            # Verify account exists and password matches
+            if username not in self.accounts:
+                logging.error(f"Account deletion failed: User {username} does not exist")
+                return chat_pb2.DeleteAccountResponse(
+                    success=False,
+                    error_message="Account does not exist"
+                )
+                
+            if self.accounts[username] != password_hash:
+                logging.error(f"Account deletion failed: Invalid password for user {username}")
+                return chat_pb2.DeleteAccountResponse(
+                    success=False,
+                    error_message="Invalid password"
+                )
+            
+            # Delete the account
+            del self.accounts[username]
+            logging.info(f"Deleted account for user: {username}")
+            
+            # Delete all messages for this user
+            original_message_count = len(self.messages)
+            self.messages = [
+                msg for msg in self.messages 
+                if msg.sender != username and msg.recipient != username
+            ]
+            messages_deleted = original_message_count - len(self.messages)
+            logging.info(f"Deleted {messages_deleted} messages for user: {username}")
+            
+            return chat_pb2.DeleteAccountResponse(
+                success=True,
+                error_message=""
+            )
+            
+        except Exception as e:
+            logging.error(f"Error during account deletion: {str(e)}", exc_info=True)
+            return chat_pb2.DeleteAccountResponse(
+                success=False,
                 error_message=str(e)
             )
 

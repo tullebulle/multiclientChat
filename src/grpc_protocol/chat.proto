@@ -60,11 +60,12 @@ message DeleteAccountResponse {
 
 // Messaging messages
 message Message {
-    uint32 id = 1;
+    int32 id = 1;
     string sender = 2;
-    string content = 3;
-    uint64 timestamp = 4;
-    bool is_read = 5;
+    string recipient = 3;
+    string content = 4;
+    int64 timestamp = 5;
+    bool is_read = 6;
 }
 
 message SendMessageRequest {
@@ -87,20 +88,20 @@ message GetMessagesResponse {
 }
 
 message MarkReadRequest {
-    repeated uint32 message_ids = 1;
+    repeated int32 message_ids = 1;
 }
 
 message MarkReadResponse {
-    uint32 marked_count = 1;
+    bool success = 1;
     string error_message = 2;
 }
 
 message DeleteMessagesRequest {
-    repeated uint32 message_ids = 1;
+    repeated int32 message_ids = 1;
 }
 
 message DeleteMessagesResponse {
-    uint32 deleted_count = 1;
+    bool success = 1;
     string error_message = 2;
 }
 

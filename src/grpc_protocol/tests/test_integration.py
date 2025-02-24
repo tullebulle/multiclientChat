@@ -1,359 +1,399 @@
 """
-Custom Protocol Integration Tests
-
-Tests the interaction between custom protocol client and server.
+Integration tests for the gRPC chat system.
 """
 
 import unittest
+import grpc
+import time
 import threading
-import socket
-import struct
-from datetime import datetime
-from ...common.server_base import ThreadedTCPServer
-from ..server_grpc import CustomChatRequestHandler
-from .. import protocol
+from concurrent import futures
 import logging
 
-class TestCustomIntegration(unittest.TestCase):
-    """Integration tests for custom binary protocol"""
+from .. import chat_pb2
+from .. import chat_pb2_grpc
+from .. import client_grpc
+from .. import server_grpc
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+class TestGRPCChatIntegration(unittest.TestCase):
+    """Integration tests for gRPC chat implementation"""
 
     @classmethod
     def setUpClass(cls):
-        """Start server in a separate thread"""
-        cls.server = ThreadedTCPServer(('localhost', 0), CustomChatRequestHandler)
-        cls.server_thread = threading.Thread(target=cls.server.serve_forever)
-        cls.server_thread.daemon = True
-        cls.server_thread.start()
-        cls.server_port = cls.server.server_address[1]
-
-    def setUp(self):
-        """Create test users and establish client connection"""
-        # Clear server state
-        self.server.chat_server.users.clear()
-        self.server.chat_server.messages.clear()
-        
-        # Create test users directly on server
-        self.server.chat_server.create_account("alice", "pass1")
-        self.server.chat_server.create_account("bob", "pass2")
-        
-        # Connect client
-        self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.client.connect(('localhost', self.server_port))
-        
-        # Login as Alice
-        self.login_alice()
-
-    def tearDown(self):
-        """Clean up client connection"""
-        self.client.close()
+        """Start the server in a separate thread"""
+        # Create and start server
+        cls.server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        cls.service = server_grpc.ChatServicer()
+        chat_pb2_grpc.add_ChatServiceServicer_to_server(cls.service, cls.server)
+        cls.server.add_insecure_port('[::]:50051')
+        cls.server.start()
+        print("\nServer started for integration tests")
 
     @classmethod
     def tearDownClass(cls):
-        """Stop the server and print summary"""
-        try:
-            # First shutdown the server
-            cls.server.shutdown()
-            # Set a timeout for the server thread to prevent hanging
-            cls.server_thread.join(timeout=2)
-            # Then close the server socket
-            cls.server.server_close()
-        except Exception as e:
-            print(f"Error during server shutdown: {e}")
-            
-        # Print test summary
-        print("\n=== Custom Protocol Integration Test Summary ===")
-        print("✅ End-to-End Flows Tested:")
-        print("  • User Registration and Authentication")
-        print("  • Message Sending and Receiving")
-        print("  • Message Status Management")
-        print("  • Account Management")
-        
-        print("\n✅ Server Features Verified:")
-        print("  • Multi-user Support")
-        print("  • Concurrent Connections")
-        print("  • Message Storage and Retrieval")
-        print("  • User Session Management")
-        
-        print("\n✅ Client-Server Interactions:")
-        print("  • Connection Handling")
-        print("  • Protocol Compliance")
-        print("  • Error Recovery")
-        print("  • Resource Cleanup")
-        print("==========================================\n")
+        """Stop the server"""
+        cls.server.stop(grace=None)
+        print("\nServer stopped")
 
-    def login_alice(self):
-        """Helper to log in as Alice"""
-        logging.debug("Attempting to login as Alice")
-        payload = b'\x05alice\x05pass1'
-        logging.debug(f"Login payload: {payload}")
-        try:
-            cmd, response = self.send_command(protocol.Command.AUTH, payload)
-            logging.debug(f"Login response: cmd={cmd}, response={response}")
-            if response != b'\x01':
-                raise RuntimeError(f"Failed to login as Alice (response: {response})")
-            logging.debug("Successfully logged in as Alice")
-        except Exception as e:
-            logging.error(f"Login failed: {e}", exc_info=True)
-            raise
+    def setUp(self):
+        """Create a new client for each test"""
+        logger.info("Setting up new test")
+        self.client = client_grpc.GRPCChatClient(host='localhost', port=50051)
+        connected = self.client.connect()
+        logger.info(f"Client connected: {connected}")
+        
+        # Clear server state
+        self.service.messages = []
+        self.service.accounts = {}
+        logger.info("Cleared server state")
 
-    def send_command(self, command, payload):
-        """Helper to send a command and get response"""
-        try:
-            logging.debug(f"Sending command {command} with payload: {payload}")
-            message = protocol.encode_message(command, payload)
-            logging.debug(f"Encoded message: {message}")
-            self.client.sendall(message)
-            
-            # Read response header (4 bytes: version + command + length)
-            logging.debug("Waiting for response header...")
-            header = self.client.recv(4)
-            logging.debug(f"Received header: {header}")
-            if not header or len(header) != 4:
-                raise RuntimeError(f"Failed to receive response header (got {len(header) if header else 0} bytes)")
-            
-            version, cmd_val, length = struct.unpack('!BBH', header)
-            if version != protocol.PROTOCOL_VERSION:
-                raise ValueError(f"Unsupported protocol version: {version}")
-            cmd = protocol.Command(cmd_val)
-            logging.debug(f"Decoded header - version: {version}, command: {cmd}, length: {length}")
-            
-            # Read payload
-            response = b''
-            while len(response) < length:
-                chunk = self.client.recv(length - len(response))
-                if not chunk:
-                    raise RuntimeError(f"Connection closed while reading response (got {len(response)}/{length} bytes)")
-                response += chunk
-                logging.debug(f"Received chunk: {chunk}, total response length: {len(response)}/{length}")
-            
-            logging.debug(f"Received complete response: cmd={cmd}, payload={response}")
-            return cmd, response
-        
-        except Exception as e:
-            logging.error(f"Error in send_command: {e}", exc_info=True)
-            raise
+    def tearDown(self):
+        """Clean up after each test"""
+        self.client.disconnect()
 
-    def test_create_account(self):
-        """Test account creation"""
-        # Format: [username_len][username][password_len][password]
-        payload = b'\x08testuser\x08testpass'
-        cmd, response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
+    def test_create_and_login(self):
+        """Test account creation and login"""
+        logger.info("Testing account creation and login")
         
-        self.assertEqual(cmd, protocol.Command.CREATE_ACCOUNT)
-        self.assertEqual(response, b'\x01')  # Success
-        
-        # Test duplicate username
-        cmd, response = self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
-        self.assertEqual(response, b'\x00')  # Failure
+        # Log the actual return value
+        result = self.client.create_account("testuser1", "password123")
+        logger.info(f"create_account returned: {result}")
+        self.assertTrue(result, "Failed to create account")
 
-    def test_authentication(self):
-        """Test user authentication"""
-        import logging
-        logging.basicConfig(level=logging.DEBUG)
+        # Log the actual return value
+        result = self.client.login("testuser1", "password123")
+        logger.info(f"login returned: {result}")
+        self.assertTrue(result, "Failed to login")
+
+    def test_send_and_receive_message(self):
+        """Test sending and receiving messages between two users"""
+        logger.info("Testing message sending and receiving")
         
-        # Test valid credentials
-        payload = b'\x05alice\x05pass1'
-        logging.debug(f"Sending auth payload: {payload}")
-        cmd, response = self.send_command(protocol.Command.AUTH, payload)
-        logging.debug(f"Received auth response: cmd={cmd}, response={response}")
-        self.assertEqual(response, b'\x01')  # Success
+        # Create two users
+        result = self.client.create_account("sender", "password123")
+        logger.info(f"create_account(sender) returned: {result}")
+        self.assertTrue(result[0], "Failed to create sender account")
         
-        # Test invalid credentials
-        payload = b'\x05alice\x08wrongpass'
-        logging.debug(f"Sending invalid auth payload: {payload}")
-        cmd, response = self.send_command(protocol.Command.AUTH, payload)
-        logging.debug(f"Received invalid auth response: cmd={cmd}, response={response}")
-        self.assertEqual(response, b'\x00')  # Failure
+        result = self.client.create_account("receiver", "password123")
+        logger.info(f"create_account(receiver) returned: {result}")
+        self.assertTrue(result[0], "Failed to create receiver account")
+
+        # Login as sender - returns bool
+        result = self.client.login("sender", "password123")
+        logger.info(f"login(sender) returned: {result}")
+        self.assertTrue(result, "Failed to login as sender")
+
+        # Send a message - returns (id, error)
+        msg_id = self.client.send_message("receiver", "Hello, receiver!")[0]  # Get just the ID
+        logger.info(f"send_message returned msg_id: {msg_id}")
+        self.assertGreater(msg_id, 0, "Failed to send message")
+
+        # Login as receiver
+        result = self.client.login("receiver", "password123")
+        logger.info(f"login(receiver) returned: {result}")
+        self.assertTrue(result, "Failed to login as receiver")
+
+        # Get messages - returns list
+        messages = self.client.get_messages()
+        logger.info(f"get_messages returned: {messages}")
+        self.assertEqual(len(messages), 1, "Wrong number of messages received")
+        self.assertEqual(messages[0]['sender'], "sender")
+        self.assertEqual(messages[0]['content'], "Hello, receiver!")
+        self.assertFalse(messages[0]['is_read'])
 
     def test_list_accounts(self):
-        """Test account listing"""
-        # Create additional test accounts
-        for i in range(5):
-            username = f"user{i:02d}"
-            payload = bytes([len(username)]) + username.encode() + b'\x08testpass'
-            self.send_command(protocol.Command.CREATE_ACCOUNT, payload)
-        
-        # List all accounts
-        payload = b'\x01*'  # pattern_len(1) + pattern(1)
-        cmd, response = self.send_command(protocol.Command.LIST_ACCOUNTS, payload)
-        
-        # Should find at least 7 accounts (alice, bob, user00-user04)
-        self.assertGreaterEqual(len(response), 7)
+        """Test listing user accounts"""
+        # Create test accounts
+        usernames = ["user1", "user2", "user3"]
+        for username in usernames:
+            success, error = self.client.create_account(username, "password123")
+            self.assertTrue(success, f"Failed to create account {username}: {error}")
 
-    def test_send_message(self):
-        """Test sending a message"""
-        # Format: [recipient_len][recipient][content_len][content]
-        content = "Hello, Bob!"
-        payload = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        
-        cmd, response = self.send_command(protocol.Command.SEND_MESSAGE, payload)
-        
-        self.assertEqual(cmd, protocol.Command.SEND_MESSAGE)
-        self.assertEqual(len(response), 4)  # message_id(4) only
-        
-        message_id = struct.unpack('!I', response)[0]
-        self.assertGreater(message_id, 0)
+        # List accounts - returns list[str]
+        accounts = self.client.list_accounts()
+        self.assertEqual(sorted(accounts), sorted(usernames), "Account list doesn't match")
 
-    def create_bob_client(self):
-        """Helper to create and authenticate a client for Bob"""
-        logging.debug("Creating Bob's client connection")
-        bob_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            bob_client.connect(('localhost', self.server_port))
-            
-            # Auth as Bob
-            auth_payload = b'\x03bob\x05pass2'
-            auth_message = protocol.encode_message(protocol.Command.AUTH, auth_payload)
-            bob_client.sendall(auth_message)
-            
-            # Read auth response properly (4 bytes: version + command + length)
-            header = bob_client.recv(4)
-            if not header or len(header) != 4:
-                raise RuntimeError("Failed to receive auth response header")
-            version, cmd_val, length = struct.unpack('!BBH', header)
-            if version != protocol.PROTOCOL_VERSION:
-                raise ValueError(f"Unsupported protocol version: {version}")
-            response = bob_client.recv(length)
-            
-            if response != b'\x01':
-                raise RuntimeError("Failed to authenticate as Bob")
-            
-            logging.debug("Successfully created Bob's client")
-            return bob_client
-        except Exception as e:
-            bob_client.close()
-            raise RuntimeError(f"Failed to create Bob's client: {e}")
-
-    def test_get_messages(self):
-        """Test retrieving messages"""
-        # Send a test message first
-        content = "Test message"
-        send_payload = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        cmd, send_response = self.send_command(protocol.Command.SEND_MESSAGE, send_payload)
-        logging.debug(f"Send message response: {send_response}")
+    def test_delete_account(self):
+        """Test account deletion"""
+        # Create and login
+        username = "deletetest"
+        success, error = self.client.create_account(username, "password123")
+        self.assertTrue(success, f"Failed to create account: {error}")
         
-        # Use Bob's client to get messages
-        try:
-            bob_client = self.create_bob_client()
-            
-            # Get messages with proper protocol version handling
-            get_payload = b'\x01'  # include_read = True
-            get_message = protocol.encode_message(protocol.Command.GET_MESSAGES, get_payload)
-            bob_client.sendall(get_message)
-            
-            # Read response with 4-byte header
-            header = bob_client.recv(4)
-            if not header or len(header) != 4:
-                raise RuntimeError("Failed to receive get_messages response header")
-            version, cmd_val, length = struct.unpack('!BBH', header)
-            if version != protocol.PROTOCOL_VERSION:
-                raise ValueError(f"Unsupported protocol version: {version}")
-            response = bob_client.recv(length)
-            
-            count = struct.unpack('!H', response[:2])[0]
-            logging.debug(f"Got {count} messages")
-            self.assertEqual(count, 1)
-            
-        finally:
-            bob_client.close()
-            logging.debug("Closed Bob's client")
+        # Delete account returns bool
+        success = self.client.delete_account(username, "password123")
+        self.assertTrue(success, "Failed to delete account")
+        
+        # Verify account is gone
+        accounts = self.client.list_accounts()
+        self.assertNotIn(username, accounts, "Account still exists after deletion")
 
-    def test_mark_read(self):
+    def test_mark_messages_as_read(self):
         """Test marking messages as read"""
-        # Send a message first
-        content = "Read this"
-        send_payload = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        cmd, send_response = self.send_command(protocol.Command.SEND_MESSAGE, send_payload)
-        message_id = struct.unpack('!I', send_response[:4])[0]
+        # Setup users
+        success, error = self.client.create_account("sender", "password123")
+        self.assertTrue(success, f"Failed to create sender account: {error}")
+        success, error = self.client.create_account("reader", "password123")
+        self.assertTrue(success, f"Failed to create reader account: {error}")
         
-        # Login as Bob
-        bob_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        bob_client.connect(('localhost', self.server_port))
+        success = self.client.login("sender", "password123")
+        self.assertTrue(success, "Failed to login as sender")
         
-        # Auth as Bob
-        auth_payload = b'\x03bob\x05pass2'
-        auth_message = protocol.encode_message(protocol.Command.AUTH, auth_payload)
-        bob_client.sendall(auth_message)
-        bob_client.recv(1024)  # Get auth response
+        # Send message
+        msg_id, error = self.client.send_message("reader", "Read me!")
+        self.assertGreater(msg_id, 0, f"Failed to send message: {error}")
         
-        # Mark as read
-        mark_payload = struct.pack('!HI', 1, message_id)  # count + message_id
-        mark_message = protocol.encode_message(protocol.Command.MARK_READ, mark_payload)
-        bob_client.sendall(mark_message)
-        _, mark_response = protocol.decode_message(bob_client.recv(1024))
+        # Login as reader
+        success = self.client.login("reader", "password123")
+        self.assertTrue(success, "Failed to login as reader")
         
-        marked_count = struct.unpack('!H', mark_response)[0]
-        self.assertEqual(marked_count, 1)
+        # Check message is unread
+        messages = self.client.get_messages()
+        self.assertFalse(messages[0]['is_read'])
         
-        bob_client.close()
+        # Mark as read returns bool
+        success = self.client.mark_read([msg_id])
+        self.assertTrue(success)
+        
+        # Verify message is now read
+        messages = self.client.get_messages()
+        self.assertTrue(messages[0]['is_read'])
 
-    def test_unread_count(self):
-        """Test getting unread message count"""
-        # Send two messages
-        content = "Unread 1"
-        send_payload1 = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        self.send_command(protocol.Command.SEND_MESSAGE, send_payload1)
-        
-        content = "Unread 2"
-        send_payload2 = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        self.send_command(protocol.Command.SEND_MESSAGE, send_payload2)
-        
-        # Login as Bob and check unread count
-        bob_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        bob_client.connect(('localhost', self.server_port))
-        
-        # Auth as Bob
-        auth_payload = b'\x03bob\x05pass2'
-        auth_message = protocol.encode_message(protocol.Command.AUTH, auth_payload)
-        bob_client.sendall(auth_message)
-        bob_client.recv(1024)  # Get auth response
-        
-        # Get unread count
-        count_message = protocol.encode_message(protocol.Command.GET_UNREAD_COUNT, b'')
-        bob_client.sendall(count_message)
-        _, count_response = protocol.decode_message(bob_client.recv(1024))
-        
-        unread_count = struct.unpack('!H', count_response)[0]
-        self.assertEqual(unread_count, 2)
-        
-        bob_client.close()
+    def test_duplicate_account_creation(self):
+        """Test creating account with existing username"""
+        # Create first account
+        success, _ = self.client.create_account("testuser2", "password123")
+        self.assertTrue(success)
+
+        # Try to create duplicate account
+        success, error = self.client.create_account("testuser2", "different_password")
+        self.assertFalse(success)
+        self.assertEqual(error, "Username already exists")
 
     def test_delete_messages(self):
-        """Test deleting messages"""
-        # Send a message first
-        content = "Delete me"
-        send_payload = b'\x03bob' + struct.pack('!H', len(content)) + content.encode()
-        cmd, send_response = self.send_command(protocol.Command.SEND_MESSAGE, send_payload)
-        message_id = struct.unpack('!I', send_response[:4])[0]
-        logging.debug(f"Created message with ID: {message_id}")
+        """Test message deletion"""
+        logger.info("Testing message deletion")
         
-        # Use Bob's client to delete message
-        try:
-            bob_client = self.create_bob_client()
-            logging.debug("Successfully logged in as Bob")
-            
-            # Delete the message
-            delete_payload = struct.pack('!HI', 1, message_id)  # count + message_id
-            logging.debug(f"Sending delete request for message ID: {message_id}")
-            delete_message = protocol.encode_message(protocol.Command.DELETE_MESSAGES, delete_payload)
-            bob_client.sendall(delete_message)
-            
-            # Read response properly with 4-byte header
-            header = bob_client.recv(4)
-            if not header or len(header) != 4:
-                raise RuntimeError("Failed to receive delete response header")
-            version, cmd_val, length = struct.unpack('!BBH', header)
-            if version != protocol.PROTOCOL_VERSION:
-                raise ValueError(f"Unsupported protocol version: {version}")
-            response = bob_client.recv(length)
-            
-            deleted_count = struct.unpack('!H', response)[0]
-            logging.debug(f"Delete response indicates {deleted_count} messages deleted")
-            self.assertEqual(deleted_count, 1)
-            
-        finally:
-            bob_client.close()
-            logging.debug("Closed Bob's client")
+        # Setup users and messages
+        self.client.create_account("sender", "password123")
+        self.client.create_account("receiver", "password123")
+        self.client.login("sender", "password123")
+        
+        # Send test messages
+        msg_id = self.client.send_message("receiver", "Test message")[0]  # Get just the ID
+        logger.info(f"Sent message with ID: {msg_id}")
+        
+        # Login as receiver
+        self.client.login("receiver", "password123")
+        
+        # Get initial messages
+        messages = self.client.get_messages()  # Returns list directly
+        logger.info(f"Initial messages: {messages}")
+        self.assertEqual(len(messages), 1)
+        
+        # Delete message
+        success = self.client.delete_messages([msg_id])
+        logger.info(f"Delete message result: {success}")
+        self.assertTrue(success)
+        
+        # Verify deletion
+        messages = self.client.get_messages()
+        logger.info(f"Messages after deletion: {messages}")
+        self.assertEqual(len(messages), 0)
+
+    def test_concurrent_messages(self):
+        """Test handling concurrent message sending"""
+        logger.info("Testing concurrent message handling")
+        
+        # Setup users
+        self.client.create_account("sender1", "password123")
+        self.client.create_account("sender2", "password123")
+        self.client.create_account("receiver", "password123")
+        
+        # Send messages from both senders
+        self.client.login("sender1", "password123")
+        msg1_id = self.client.send_message("receiver", "Message 1")[0]
+        
+        self.client.login("sender2", "password123")
+        msg2_id = self.client.send_message("receiver", "Message 2")[0]
+        
+        # Check messages as receiver
+        self.client.login("receiver", "password123")
+        messages = self.client.get_messages()  # Returns list directly
+        self.assertEqual(len(messages), 2)
+        
+        # Verify both messages received
+        message_contents = {msg['content'] for msg in messages}
+        self.assertEqual(message_contents, {"Message 1", "Message 2"})
+
+    def test_unread_messages_filter(self):
+        """Test filtering unread messages"""
+        logger.info("Testing unread message filtering")
+        
+        # Setup users
+        self.client.create_account("sender", "password123")
+        self.client.create_account("receiver", "password123")
+        
+        # Send messages
+        self.client.login("sender", "password123")
+        msg_ids = []
+        for i in range(3):
+            msg_id = self.client.send_message("receiver", f"Message {i}")[0]
+            msg_ids.append(msg_id)
+            logger.info(f"Sent message {i} with ID: {msg_id}")
+        
+        # Login as receiver
+        self.client.login("receiver", "password123")
+        
+        # Mark some messages as read
+        self.client.mark_read(msg_ids[:1])
+        logger.info("Marked first message as read")
+        
+        # Get unread messages
+        messages = self.client.get_messages(include_read=False)  # Returns list directly
+        logger.info(f"Unread messages: {messages}")
+        self.assertEqual(len(messages), 2)  # Should only see unread messages
+
+    def test_send_message_to_nonexistent_user(self):
+        """Test sending a message to a user that doesn't exist"""
+        # Create and login as sender
+        self.client.create_account("sender", "password123")
+        self.client.login("sender", "password123")
+        
+        # Try to send message to nonexistent user
+        msg_id, error = self.client.send_message("nonexistent", "Hello!")
+        self.assertEqual(msg_id, 0)
+        self.assertEqual(error, "Recipient does not exist")
+
+    def test_unauthorized_message_access(self):
+        """Test that users can't access others' messages"""
+        logger.info("Testing unauthorized message access")
+        
+        # Setup users
+        self.client.create_account("sender", "password123")
+        self.client.create_account("receiver", "password123")
+        self.client.create_account("hacker", "password123")
+        
+        # Send message
+        self.client.login("sender", "password123")
+        msg_id = self.client.send_message("receiver", "Secret message")[0]
+        logger.info(f"Sent message with ID: {msg_id}")
+        
+        # Try to access as unauthorized user
+        self.client.login("hacker", "password123")
+        messages = self.client.get_messages()  # Returns list directly
+        logger.info(f"Messages visible to hacker: {messages}")
+        self.assertEqual(len(messages), 0)
+
+    def test_message_ordering(self):
+        """Test that messages are returned in order"""
+        logger.info("Testing message ordering")
+        
+        # Setup users
+        self.client.create_account("sender", "password123")
+        self.client.create_account("receiver", "password123")
+        self.client.login("sender", "password123")
+        
+        # Send messages with different timestamps
+        msg_ids = []
+        for i in range(3):
+            msg_id = self.client.send_message("receiver", f"Message {i}")[0]
+            msg_ids.append(msg_id)
+            logger.info(f"Sent message {i} with ID: {msg_id}")
+        
+        # Login as receiver
+        self.client.login("receiver", "password123")
+        
+        # Get messages
+        messages = self.client.get_messages()  # Returns list directly
+        logger.info(f"Retrieved messages: {messages}")
+        
+        # Verify order
+        timestamps = [msg['timestamp'] for msg in messages]
+        self.assertEqual(timestamps, sorted(timestamps))
+
+    def test_invalid_login_attempts(self):
+        """Test invalid login scenarios"""
+        logger.info("Testing invalid login attempts")
+        
+        # Create test account
+        result = self.client.create_account("user", "password123")
+        logger.info(f"create_account returned: {result}")
+        self.assertTrue(result[0], "Failed to create account")
+        
+        # Test wrong password - returns bool
+        success = self.client.login("user", "wrongpass")
+        logger.info(f"login with wrong password returned: {success}")
+        self.assertFalse(success)
+        
+        # Test non-existent user - returns bool
+        success = self.client.login("nonexistent", "password123")
+        logger.info(f"login with nonexistent user returned: {success}")
+        self.assertFalse(success)
+
+    def test_empty_message_handling(self):
+        """Test handling of empty messages"""
+        # Create and login user
+        self.client.create_account("sender", "password123")
+        self.client.create_account("receiver", "password123")
+        self.client.login("sender", "password123")
+        
+        # Try to send empty message
+        msg_id, error = self.client.send_message("receiver", "")
+        self.assertEqual(msg_id, 0)
+        self.assertEqual(error, "Message content cannot be empty")
+
+    def test_bulk_message_operations(self):
+        """Test bulk message operations (mark read, delete)"""
+        logger.info("Testing bulk message operations")
+        
+        # Create test users and messages
+        self.client.create_account("sender", "password123")
+        self.client.create_account("receiver", "password123")
+        self.client.login("sender", "password123")
+        
+        # Send multiple messages
+        msg_ids = []
+        for i in range(5):
+            msg_id = self.client.send_message("receiver", f"Message {i}")[0]  # Get just the ID
+            msg_ids.append(msg_id)
+        
+        # Login as receiver
+        self.client.login("receiver", "password123")
+        
+        # Get initial messages
+        messages = self.client.get_messages()  # Returns list directly
+        self.assertEqual(len(messages), 5)
+        
+        # Mark some messages as read
+        success = self.client.mark_read(msg_ids[:3])
+        self.assertTrue(success)
+        
+        # Verify read status
+        messages = self.client.get_messages()
+        read_count = sum(1 for msg in messages if msg['is_read'])
+        self.assertEqual(read_count, 3)
+
+    def test_reconnection(self):
+        """Test client reconnection"""
+        logger.info("Testing client reconnection")
+        
+        # Create test account
+        self.client.create_account("user", "password123")
+        
+        # Initial login
+        success = self.client.login("user", "password123")  # Returns bool
+        self.assertTrue(success)
+        
+        # Simulate disconnect and reconnect
+        self.client.disconnect()
+        self.client.connect()
+        
+        # Try login again
+        success = self.client.login("user", "password123")
+        self.assertTrue(success)
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2) 
+    unittest.main() 

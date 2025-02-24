@@ -16,6 +16,22 @@ sudo apt-get install python3-tk
 ```
 
 
+### gRPC Protocol
+
+To run the server with the gRPC protocol, use the following command from the root directory:
+
+```bash
+python -m src.grpc_protocol.server_grpc
+```
+
+To run the gui client, use the following command from the root directory:
+
+```bash 
+python -m src.grpc_protocol.gui_client
+```
+
+
+
 #### Custom Protocol
 To run the server with the custom protocol, use the following command from the root directory:
 
@@ -46,6 +62,15 @@ python src/run_gui.py --protocol json
 
 
 ### Testing
+Testing the gRPC protocol:
+```bash
+python -m src.grpc_protocol.tests.test_client
+```
+```bash
+python -m src.grpc_protocol.tests.test_integration
+```
+
+
 Testing the custom protocol:
 ```bash
 ./src/custom_protocol/tests/run_tests.sh
