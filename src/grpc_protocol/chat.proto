@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package chat;
+
+// Main chat service definition
+service ChatService {
+    // Account management
+    rpc CreateAccount (CreateAccountRequest) returns (CreateAccountResponse);
+    rpc Authenticate (AuthRequest) returns (AuthResponse);
+    rpc ListAccounts (ListAccountsRequest) returns (ListAccountsResponse);
+    rpc DeleteAccount (DeleteAccountRequest) returns (DeleteAccountResponse);
+    
+    // Messaging
+    rpc SendMessage (SendMessageRequest) returns (SendMessageResponse);
+    rpc GetMessages (GetMessagesRequest) returns (GetMessagesResponse);
+    rpc MarkRead (MarkReadRequest) returns (MarkReadResponse);
+    rpc DeleteMessages (DeleteMessagesRequest) returns (DeleteMessagesResponse);
+    rpc GetUnreadCount (UnreadCountRequest) returns (UnreadCountResponse);
+}
+
+// Account management messages
+message CreateAccountRequest {
+    string username = 1;
+    string password_hash = 2;
+}
+
+message CreateAccountResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message AuthRequest {
+    string username = 1;
+    string password_hash = 2;
+}
+
+message AuthResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message ListAccountsRequest {
+    string pattern = 1;  // Search pattern, "*" for all
+}
+
+message ListAccountsResponse {
+    repeated string usernames = 1;
+    string error_message = 2;
+}
+
+message DeleteAccountRequest {
+    string username = 1;
+    string password_hash = 2;
+}
+
+message DeleteAccountResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// Messaging messages
+message Message {
+    int32 id = 1;
+    string sender = 2;
+    string recipient = 3;
+    string content = 4;
+    int64 timestamp = 5;
+    bool is_read = 6;
+}
+
+message SendMessageRequest {
+    string recipient = 1;
+    string content = 2;
+}
+
+message SendMessageResponse {
+    uint32 message_id = 1;
+    string error_message = 2;
+}
+
+message GetMessagesRequest {
+    bool include_read = 1;
+}
+
+message GetMessagesResponse {
+    repeated Message messages = 1;
+    string error_message = 2;
+}
+
+message MarkReadRequest {
+    repeated int32 message_ids = 1;
+}
+
+message MarkReadResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message DeleteMessagesRequest {
+    repeated int32 message_ids = 1;
+}
+
+message DeleteMessagesResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message UnreadCountRequest {}
+
+message UnreadCountResponse {
+    uint32 count = 1;
+    string error_message = 2;
+} 
