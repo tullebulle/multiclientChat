@@ -19,9 +19,6 @@ Protocol Structure:
 """
 
 import socket
-import argparse
-import getpass
-import sys
 import logging
 import json
 from typing import Tuple, Dict, Any

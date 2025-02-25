@@ -29,7 +29,7 @@ python src/run_gui.py
 ```
 
 These commands take three optional arguments:
- 1. --protocol, takes values custom, json, or grpc. Specifies protocol of communication between server and client.
+ 1. --protocol, default is custom, takes values custom, json, or grpc. Specifies protocol of communication between server and client.
  2. --host, default is localhost. Specifies the server location.
  3. --port, default is 9999. Specifies the server port.
 
