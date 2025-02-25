@@ -21,12 +21,25 @@ Example:
 import argparse
 import os
 import sys
+import logging
 
 # Add parent directory to Python path to handle imports when run from different locations
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 from src.common.gui_client import ChatGUI
+
+# Configure logging to show in both file and console
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('grpc_client.log'),  # Log to file
+        logging.StreamHandler(sys.stdout)        # Log to console
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 def main():
     """
@@ -48,19 +61,21 @@ def main():
     parser.add_argument("--port", type=int, default=9999, help="Server port")
     parser.add_argument(
         "--protocol",
-        choices=["json", "custom"],
+        choices=["json", "custom", "grpc"],
         default="custom",
         help="Protocol to use"
     )
     args = parser.parse_args()
     
+    logger.info(f"Starting client with host={args.host}, port={args.port}")
     try:
         client = ChatGUI(args.host, args.port, args.protocol)
         client.run()
     except KeyboardInterrupt:
-        print("\nShutting down client...")
+       logger.info("Client shutdown complete.")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error running server: {e}")
+        logger.info("Client shutdown complete.")
 
 if __name__ == "__main__":
     main() 

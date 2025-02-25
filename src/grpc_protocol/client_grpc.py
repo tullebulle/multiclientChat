@@ -26,7 +26,7 @@ class GRPCChatClient:
         current_user: Currently authenticated username
     """
     
-    def __init__(self, host='localhost', port=50051):
+    def __init__(self, host='localhost', port=9999):
         """
         Initialize the chat client.
         

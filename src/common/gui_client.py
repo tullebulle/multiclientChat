@@ -21,10 +21,25 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import logging
 from datetime import datetime
-from src.custom_protocol import protocol
+import argparse
+import sys
+
+# from src.custom_protocol import protocol
 from ..custom_protocol.client import CustomChatClient
 from ..json_protocol.client import JSONChatClient
-import argparse
+from ..grpc_protocol.client_grpc import GRPCChatClient
+
+# Configure logging to show in both file and console
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('grpc_client.log'),  # Log to file
+        logging.StreamHandler(sys.stdout)        # Log to console
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 class ChatGUI:
     """
@@ -59,16 +74,25 @@ class ChatGUI:
         The constructor sets up the main window, initializes the appropriate protocol
         client, and creates the tab-based interface.
         """
+        logger.info(f"Starting {protocol} Chat GUI")
+        self.protocol = protocol
+
+
         if protocol == "custom":
             self.client = CustomChatClient(host=host, port=port)
-        else:
+        elif protocol == "json":
             self.client = JSONChatClient(host=host, port=port)
+        elif protocol == "grpc":
+            self.client = GRPCChatClient(host=host, port=port)
+
 
         if not self.client.connect():
-            messagebox.showerror("Error", "Could not connect to server!")
+            error_msg = "Could not connect to gRPC server!"
+            logger.error(error_msg)
+            messagebox.showerror("Connection Error", error_msg)
             return
         
-        self.protocol = protocol
+        logger.info(f"Connected to gRPC server at {host}:{port}")
 
         # Main window setup
         self.root = tk.Tk()
@@ -86,12 +110,11 @@ class ChatGUI:
         # Initially disable chat tab
         self.notebook.tab(1, state='disabled')
         
-        # Setup logging
-        logging.basicConfig(level=logging.DEBUG)
-        
         # Add refresh interval (in milliseconds)
         self.refresh_interval = 1000  # 5 seconds
         self.schedule_refresh()
+        
+        logger.info("GUI initialization complete")
         
     def create_login_tab(self):
         """
@@ -331,27 +354,36 @@ class ChatGUI:
             
     def handle_delete_account(self):
         """Handle delete account button click"""
+        logger.info("Delete account button clicked")
+
         username = self.delete_username.get().strip()
         password = self.delete_password.get().strip()
-        
+        logger.debug(f"Attempting to delete account for user: {username}")
+
         if not username or not password:
+            logger.warning("Delete account failed: Missing username or password")
             messagebox.showerror("Error", "Please enter both username and password")
             return
         
         # Try to login as the user to check messages
         temp_client = None
         if self.client.current_user != username:
+            logger.debug("Creating temporary client for message check")
             # Create temporary client with same protocol
             if self.protocol == "custom":
                 temp_client = CustomChatClient(host=self.client.host, port=self.client.port)
-            else:
+            elif self.protocol == "json":
                 temp_client = JSONChatClient(host=self.client.host, port=self.client.port)
-            
+            elif self.protocol == "grpc":
+                temp_client = GRPCChatClient(host=self.client.host, port=self.client.port)
+
             if not temp_client.connect() or not temp_client.login(username, password):
+                logger.error(f"Failed to verify account for user: {username}")
                 messagebox.showerror("Error", "Failed to verify account. Please check your credentials.")
                 return
             messages = temp_client.get_messages(include_read=False)
-        else:
+        else:            
+            logger.debug("Using existing client for message check")
             messages = self.client.get_messages(include_read=False)
         
         # Check for unread messages
@@ -360,6 +392,7 @@ class ChatGUI:
                                       f"This account has {len(messages)} unread messages!\n"
                                       "Are you sure you want to delete your account?\n"
                                       "This action cannot be undone!"):
+                logger.info("User cancelled deletion due to unread messages")
                 if temp_client:
                     temp_client.disconnect()
                 return
@@ -368,12 +401,15 @@ class ChatGUI:
             if not messagebox.askyesno("Confirm Delete", 
                                       "Are you sure you want to delete your account?\n"
                                       "This action cannot be undone!"):
+                logger.info("User cancelled deletion")
                 if temp_client:
                     temp_client.disconnect()
                 return
         
         # Try to delete account
+        logger.info(f"Proceeding with account deletion for user: {username}")
         if self.client.delete_account(username, password):
+            logger.info(f"Successfully deleted account: {username}")
             messagebox.showinfo("Success", "Account deleted successfully")
             # Clear the fields
             self.delete_username.delete(0, tk.END)
@@ -384,6 +420,7 @@ class ChatGUI:
                 self.notebook.select(0)
                 self.client.current_user = None
         else:
+            logger.error(f"Failed to delete account for user: {username}")
             messagebox.showerror("Error", "Failed to delete account. Please check your credentials.")
         
         # Clean up temporary client if used
@@ -450,8 +487,11 @@ class ChatGUI:
             for msg in recent_messages:
                 if self.protocol == "custom":
                     timestamp = datetime.fromtimestamp(msg['timestamp'])
-                else:
+                elif self.protocol == "json":
                     timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%H:%M:%S')
+                elif self.protocol == "grpc":
+                    timestamp = datetime.fromtimestamp(msg['timestamp']).strftime('%H:%M:%S')
+
                 content = msg['content']
                 
                 # Word wrap the content

@@ -286,32 +286,32 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                 error_message=str(e)
             )
 
-def serve(port=50051):
-    """
-    Start the gRPC server.
+# def serve(port=50051):
+#     """
+#     Start the gRPC server.
     
-    Args:
-        port: Port number to listen on
+#     Args:
+#         port: Port number to listen on
         
-    The server runs until interrupted, handling requests using
-    the ChatServicer implementation.
-    """
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    chat_pb2_grpc.add_ChatServiceServicer_to_server(
-        ChatServicer(), server
-    )
-    server.add_insecure_port(f'[::]:{port}')
-    server.start()
+#     The server runs until interrupted, handling requests using
+#     the ChatServicer implementation.
+#     """
+#     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+#     chat_pb2_grpc.add_ChatServiceServicer_to_server(
+#         ChatServicer(), server
+#     )
+#     server.add_insecure_port(f'[::]:{port}')
+#     server.start()
     
-    logging.info(f"gRPC Server started on port {port}")
+#     logging.info(f"gRPC Server started on port {port}")
     
-    try:
-        while True:
-            time.sleep(86400)  # One day in seconds
-    except KeyboardInterrupt:
-        server.stop(0)
-        logging.info("Server stopped")
+#     try:
+#         while True:
+#             time.sleep(86400)  # One day in seconds
+#     except KeyboardInterrupt:
+#         server.stop(0)
+#         logging.info("Server stopped")
 
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    serve() 
+# if __name__ == '__main__':
+#     logging.basicConfig(level=logging.INFO)
+#     serve() 
