@@ -16,48 +16,22 @@ sudo apt-get install python3-tk
 ```
 
 
-### gRPC Protocol
-
-To run the server with the gRPC protocol, use the following command from the root directory:
-
-```bash
-python -m src.grpc_protocol.server_grpc
-```
-
-To run the gui client, use the following command from the root directory:
-
-```bash 
-python -m src.grpc_protocol.gui_client
-```
-
-
-
-#### Custom Protocol
-To run the server with the custom protocol, use the following command from the root directory:
+### Running the server and client
+To run the server, use the following command from the root directory:
 
 ```bash
-python src/run_server.py --protocol custom
+python src/run_server.py 
 ```
 
 To run a client gui, use the following command from the root directory:
 ```bash
-python src/run_gui.py --protocol custom
+python src/run_gui.py
 ```
 
-
-#### JSON Protocol
-
-To run the server with the JSON protocol, use the following command:
-
-```bash
-python src/run_server.py --protocol json
-```
-and run the gui client with the JSON protocol, use the following command:
-```bash
-python src/run_gui.py --protocol json
-```
-
-
+These commands take three optional arguments:
+ 1. --protocol, takes values custom, json, or grpc. Specifies protocol of communication between server and client.
+ 2. --host, default is localhost. Specifies the server location.
+ 3. --port, default is 9999. Specifies the server port.
 
 
 ### Testing
