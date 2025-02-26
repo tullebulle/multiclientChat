@@ -7,7 +7,7 @@ import grpc
 import time
 from unittest.mock import MagicMock, patch, Mock
 from .. import chat_pb2
-from .. import client_grpc
+from .. import client
 import logging
 
 class TestGRPCChatClient(unittest.TestCase):
@@ -19,7 +19,7 @@ class TestGRPCChatClient(unittest.TestCase):
         self.mock_stub = Mock()
         
         # Create client and replace its stub with our mock
-        self.client = client_grpc.GRPCChatClient(host='localhost', port=50051)
+        self.client = client.GRPCChatClient(host='localhost', port=50051)
         self.client.stub = self.mock_stub
         
         logging.info("Set up test client with mock stub")

@@ -11,8 +11,8 @@ import logging
 
 from .. import chat_pb2
 from .. import chat_pb2_grpc
-from .. import client_grpc
-from .. import server_grpc
+from .. import client
+from .. import server
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class TestGRPCChatIntegration(unittest.TestCase):
         """Start the server in a separate thread"""
         # Create and start server
         cls.server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        cls.service = server_grpc.ChatServicer()
+        cls.service = server.ChatServicer()
         chat_pb2_grpc.add_ChatServiceServicer_to_server(cls.service, cls.server)
         cls.server.add_insecure_port('[::]:50051')
         cls.server.start()
@@ -40,7 +40,7 @@ class TestGRPCChatIntegration(unittest.TestCase):
     def setUp(self):
         """Create a new client for each test"""
         logger.info("Setting up new test")
-        self.client = client_grpc.GRPCChatClient(host='localhost', port=50051)
+        self.client = client.GRPCChatClient(host='localhost', port=50051)
         connected = self.client.connect()
         logger.info(f"Client connected: {connected}")
         

@@ -37,7 +37,7 @@ from src.json_protocol.server import JSONChatServer
 from src.custom_protocol.server import CustomChatServer
 from src.grpc_protocol import chat_pb2_grpc
 from concurrent import futures
-from src.grpc_protocol.server_grpc import ChatServicer
+from src.grpc_protocol.server import ChatServicer
 
 
 def shutdown_server(server):

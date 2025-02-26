@@ -27,7 +27,7 @@ import sys
 # from src.custom_protocol import protocol
 from ..custom_protocol.client import CustomChatClient
 from ..json_protocol.client import JSONChatClient
-from ..grpc_protocol.client_grpc import GRPCChatClient
+from ..grpc_protocol.client import GRPCChatClient
 
 # Configure logging to show in both file and console
 logging.basicConfig(

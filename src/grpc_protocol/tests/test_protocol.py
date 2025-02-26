@@ -10,9 +10,9 @@ from datetime import datetime
 import threading
 import socket
 from ...common.server_base import ThreadedTCPServer
-from ..server_grpc import CustomChatRequestHandler
+from ..server import CustomChatRequestHandler
 from .. import protocol
-from ..client_grpc import CustomChatClient
+from ..client import CustomChatClient
 
 class TestCustomProtocol(unittest.TestCase):
     """Unit tests for custom binary protocol implementation"""
