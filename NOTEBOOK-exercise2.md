@@ -15,7 +15,14 @@ Questions: Re-implement the chat application you built for the first design exer
     LIST_ACCOUNTS   10              75              7               7.50x       0.70x
     DELETE_MESSAGES 30              104             12              3.47x       0.40x
     -----------------------------------------------------------------------------------------
-    
+    - The reason that gRPC is using less bytes than the custom protocol is that gRPC uses variable-length integers, so -- for example -- in the case of DELETE_MESSAGES, in the benchmark above, the message IDs sent are all fairly small numbers, so gRPC uses less bytes by encoding them in less than 4 bytes (as our protocol does). See https://protobuf.dev/programming-guides/encoding/
+
+    If, instead, we run DELETE_MESSAGES with the same number of messages (6) as in the benchmark above, but use large message IDs (that require 4 bytes to be encoded), we get that our protocol is slightly more efficient:
+    -----------------------------------------------------------------------------------------
+    Message Type    Custom (bytes)  JSON (bytes)    gRPC (bytes)    JSON/Custom  gRPC/Custom 
+    -----------------------------------------------------------------------------------------
+    DELETE_MESSAGES 30              146             32              4.87x       1.07x
+    -----------------------------------------------------------------------------------------
 
 - How does it change the structure of the client?
     - In short, the structure of the client side changed minimally on a high level. It changed in regards to how messages are encoded and sent.

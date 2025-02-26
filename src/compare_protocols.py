@@ -30,7 +30,7 @@ class ProtocolComparisonTests(unittest.TestCase):
                 "pattern": "test*",
             },
             "DELETE_MESSAGES": {
-                "message_ids": [1,4,12,8,2025,100_000_000]
+                "message_ids": [2147483630,2147483630,2147483630,2147483630,2147483630,2147483630]#[1,4,12,8,2025,100_000_000]
             }
         }
 
