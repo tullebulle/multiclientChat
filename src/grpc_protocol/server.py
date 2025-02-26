@@ -115,7 +115,7 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                         error_message="Recipient does not exist"
                     )
                 
-                with self.messages_lock:
+                with self.messages_lock:              
                     # Create and store the message
                     msg_id = self.next_message_id
                     self.next_message_id += 1
@@ -129,10 +129,10 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                     )
                     self.messages.append(msg)
             
-            return chat_pb2.SendMessageResponse(
-                message_id=msg_id,
-                error_message=""
-            )
+                    return chat_pb2.SendMessageResponse(
+                        message_id=msg_id,
+                        error_message=""
+                    )
         except Exception as e:
             return chat_pb2.SendMessageResponse(
                 message_id=0,

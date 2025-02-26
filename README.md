@@ -37,12 +37,8 @@ These commands take three optional arguments:
 ### Testing
 Testing the gRPC protocol:
 ```bash
-python -m src.grpc_protocol.tests.test_client
+./src/grpc_protocol/tests/run_tests.sh
 ```
-```bash
-python -m src.grpc_protocol.tests.test_integration
-```
-
 
 Testing the custom protocol:
 ```bash
