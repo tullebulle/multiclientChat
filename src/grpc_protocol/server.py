@@ -95,6 +95,12 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                             error_message=error_message
                         )
                 except NotLeaderError as e:
+                    # Forward the request to the leader instead of returning an error
+                    response = self._forward_to_leader(request, "CreateAccount", context)
+                    if response:
+                        return response
+                    
+                    # If forwarding failed, return the original error
                     context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
                     context.set_details(str(e))
                     return chat_pb2.CreateAccountResponse(
@@ -547,6 +553,96 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             logging.error(f"Error getting status: {e}")
             return chat_pb2.StatusResponse(
                 state=chat_pb2.StatusResponse.ServerState.UNKNOWN,
+                error_message=str(e)
+            )
+
+    def _forward_to_leader(self, request, method_name, context):
+        """
+        Forward a request to the current leader.
+        
+        Args:
+            request: The original gRPC request
+            method_name: Name of the gRPC method to call on the leader
+            context: The original gRPC context
+            
+        Returns:
+            The response from the leader
+        """
+        # Check if we know who the leader is
+        if not self.raft_node.leader_id:
+            context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+            context.set_details("No known leader")
+            return None
+        
+        # Get leader address
+        leader_id = self.raft_node.leader_id
+        if leader_id not in self.raft_node.peer_addresses:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Leader {leader_id} address not in peer list")
+            return None
+        
+        leader_address = self.raft_node.peer_addresses[leader_id]
+        
+        # Forward the request to the leader
+        try:
+            logging.info(f"Forwarding {method_name} request to leader {leader_id} at {leader_address}")
+            
+            # Create a channel and stub for leader
+            channel = grpc.insecure_channel(leader_address)
+            stub = chat_pb2_grpc.ChatServiceStub(channel)
+            
+            # Get the appropriate method from the stub
+            forward_method = getattr(stub, method_name)
+            
+            # Forward any authentication metadata
+            metadata = []
+            for key, value in context.invocation_metadata():
+                if key == 'username':
+                    metadata.append(('username', value))
+            
+            # Call the method on the leader with the original request
+            response = forward_method(request, metadata=metadata)
+            
+            # Close the channel
+            channel.close()
+            
+            return response
+            
+        except Exception as e:
+            logging.error(f"Error forwarding request to leader: {e}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Error forwarding to leader: {str(e)}")
+            return None
+
+    # def GetClusterMembers(self, request: chat_pb2.ClusterMembersRequest, context: grpc.ServicerContext) -> chat_pb2.ClusterMembersResponse:
+    #     """
+    #     Get information about all servers in the cluster.
+        
+    #     This includes server addresses, availability status, and which one is the leader.
+    #     """
+    #     try:
+    #         # Get cluster members from the Raft node
+    #         members = self.raft_node.get_cluster_members()
+            
+    #         # Convert to protocol buffer format
+    #         pb_members = []
+    #         for node_id, info in members.items():
+    #             pb_member = chat_pb2.ServerInfo(
+    #                 node_id=node_id,
+    #                 address=info['address'],
+    #                 is_available=info['is_available'],
+    #                 is_leader=info['is_leader']
+    #             )
+    #             pb_members.append(pb_member)
+            
+    #         return chat_pb2.ClusterMembersResponse(
+    #             servers=pb_members,
+    #             error_message=""
+    #         )
+    #     except Exception as e:
+            logging.error(f"Error getting cluster members: {e}")
+            return chat_pb2.ClusterMembersResponse(
+                servers=[],
                 error_message=str(e)
             )
 

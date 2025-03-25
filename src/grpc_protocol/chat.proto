@@ -193,3 +193,24 @@ message StatusResponse {
     int32 last_applied = 5;
     string error_message = 6;
 } 
+
+message ServerInfo {
+    string node_id = 1;
+    string address = 2;
+    bool is_available = 3; 
+    bool is_leader = 4;
+}
+
+message ClusterMembersRequest {
+    // Empty request
+}
+
+message ClusterMembersResponse {
+    repeated ServerInfo servers = 1;
+    string error_message = 2;
+}
+
+service ChatService {
+    // ... existing RPCs ...
+    rpc GetClusterMembers(ClusterMembersRequest) returns (ClusterMembersResponse);
+}

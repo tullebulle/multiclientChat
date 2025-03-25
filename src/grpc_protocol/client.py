@@ -81,29 +81,31 @@ class GRPCChatClient:
             self.channel = None
             self.stub = None
         
-        # Try to connect to the known leader first
-        if self.leader_address:
-            logging.info(f"Attempting to connect to known leader at {self.leader_address}")
-            if self._connect_to(self.leader_address):
-                return True
-            # If leader connection fails, clear the leader address
-            logging.warning(f"Failed to connect to leader at {self.leader_address}, will try other servers")
-            self.leader_address = None
-        
-        # Otherwise, try each server in round-robin fashion
-        server_count = len(self.servers)
-        logging.info(f"Trying to connect to any of {server_count} servers")
-        
-        for i in range(server_count):
-            server_address = self.servers[self.current_server_idx]
-            self.current_server_idx = (self.current_server_idx + 1) % server_count
+        # If we have multiple servers, try each one
+        if len(self.servers) > 1:
+            # Try leader first if known
+            if self.leader_address:
+                logging.info(f"Attempting to connect to known leader at {self.leader_address}")
+                if self._connect_to(self.leader_address):
+                    return True
+                # If leader connection fails, clear the leader address
+                logging.warning(f"Failed to connect to leader at {self.leader_address}")
+                self.leader_address = None
             
-            logging.info(f"Attempting to connect to server: {server_address}")
-            if self._connect_to(server_address):
-                return True
-        
-        logging.error("Failed to connect to any server")
-        return False
+            # Try all servers
+            logging.info(f"Trying all available servers ({len(self.servers)})")
+            for server in self.servers:
+                logging.info(f"Attempting to connect to server: {server}")
+                if self._connect_to(server):
+                    return True
+            
+            logging.error("Failed to connect to any server")
+            return False
+        else:
+            # Just one server, try it
+            server = self.servers[0]
+            logging.info(f"Attempting to connect to the only available server: {server}")
+            return self._connect_to(server)
     
     def _connect_to(self, server_address: str) -> bool:
         """
@@ -671,6 +673,12 @@ class GRPCChatClient:
         Returns:
             Tuple[Dict[str, Any], str]: (status_dict, error_message)
         """
+        # Check if stub exists
+        if self.stub is None:
+            logging.error("Cannot get cluster status: stub is None, attempting to reconnect")
+            if not self.connect():
+                return {}, "Failed to connect to any server. Try specifying multiple servers with --server server1,server2,server3"
+        
         max_retries = 3
         retry_count = 0
         
@@ -691,6 +699,12 @@ class GRPCChatClient:
                     'log_count': response.log_count
                 }
                 
+                # Store leader ID for future connections
+                if response.leader_id and response.leader_id in self.node_id_to_port:
+                    leader_port = self.node_id_to_port[response.leader_id]
+                    self.leader_address = f"localhost:{leader_port}"
+                    logging.info(f"Updated leader address to {self.leader_address}")
+                
                 return status, ""
             
             except grpc.RpcError as e:
@@ -698,12 +712,17 @@ class GRPCChatClient:
                     retry_count += 1
                     time.sleep(0.5 * retry_count)  # Exponential backoff
                 else:
-                    return {}, str(e)
+                    # Try all servers again
+                    if self.connect():
+                        retry_count += 1
+                        continue
+                    else:
+                        return {}, f"Server unavailable: {str(e)}. Try connecting to a different node."
             
             except Exception as e:
                 return {}, str(e)
         
-        return {}, "Max retries exceeded"
+        return {}, "Max retries exceeded. Try connecting to a different node."
     
     def get_status(self) -> Dict[str, Any]:
         """

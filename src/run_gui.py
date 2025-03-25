@@ -378,22 +378,53 @@ class ChatGUI:
             return
         
         try:
+            # Check if client stub is None (disconnected)
+            if self.client.stub is None:
+                # Try to reconnect
+                if not self.client.connect():
+                    # Still disconnected - show error
+                    error_message = "Disconnected: No server available"
+                    if hasattr(self, 'server_status_var'):
+                        self.server_status_var.set(error_message)
+                    
+                    if hasattr(self, 'cluster_status_text'):
+                        self.cluster_status_text.config(state=tk.NORMAL)
+                        self.cluster_status_text.delete(1.0, tk.END)
+                        self.cluster_status_text.insert(tk.END, 
+                            "Connection Error: All servers unavailable\n\n"
+                            "Please check if servers are running.\n"
+                            "You may need to restart with all servers specified:\n"
+                            "python src/run_gui.py --server localhost:9001,localhost:9002,localhost:9003"
+                        )
+                        self.cluster_status_text.config(state=tk.DISABLED)
+                    return
+            
+            # Get status as normal
             status, error = self.client.get_cluster_status()
             
             if error:
-                status_text = f"Error getting cluster status: {error}"
+                # Show error but try to reconnect
+                status_text = f"Error getting status: {error}"
                 if hasattr(self, 'server_status_var'):
                     self.server_status_var.set(status_text)
                 
-                # Also update the cluster status text box if in chat frame
                 if hasattr(self, 'cluster_status_text'):
                     self.cluster_status_text.config(state=tk.NORMAL)
                     self.cluster_status_text.delete(1.0, tk.END)
-                    self.cluster_status_text.insert(tk.END, f"Server Error: {error}\n\nTry connecting to a different node.")
+                    self.cluster_status_text.insert(tk.END, 
+                        f"Error: {error}\n\n"
+                        f"Attempting to connect to alternate servers...\n\n"
+                        f"If this persists, restart with all servers:\n"
+                        f"python src/run_gui.py --server localhost:9001,localhost:9002,localhost:9003"
+                    )
                     self.cluster_status_text.config(state=tk.DISABLED)
+                    
+                    # Try to reconnect to any available server
+                    if self.client.connect():
+                        self.after(1000, self.check_cluster_status)
                 return
             
-            # Format status information
+            # All is well - display the status
             status_text = (
                 f"Node: {status['node_id']} ({status['state']})\n"
                 f"Leader: {status['leader_id'] or 'Unknown'}\n"
@@ -413,25 +444,28 @@ class ChatGUI:
                 self.cluster_status_text.delete(1.0, tk.END)
                 self.cluster_status_text.insert(tk.END, status_text)
                 self.cluster_status_text.config(state=tk.DISABLED)
+            
         except Exception as e:
             logging.error(f"Error checking cluster status: {e}")
-            error_message = f"Node unavailable: {str(e)}"
+            error_message = f"Error: {str(e)}"
             
-            # Update status text in login frame
+            # Update status text
             if hasattr(self, 'server_status_var'):
                 self.server_status_var.set(error_message)
             
-            # Update status text in chat frame
             if hasattr(self, 'cluster_status_text'):
                 self.cluster_status_text.config(state=tk.NORMAL)
                 self.cluster_status_text.delete(1.0, tk.END)
                 self.cluster_status_text.insert(tk.END, 
-                    f"Error: Server unavailable\n\n"
-                    f"Connection failed: {str(e)}\n\n"
-                    f"The node you're connected to is not responding.\n"
-                    f"Try connecting to a different node in the cluster."
+                    f"Error: Connection problem\n\n"
+                    f"{str(e)}\n\n"
+                    f"Attempting to reconnect..."
                 )
                 self.cluster_status_text.config(state=tk.DISABLED)
+                
+                # Try to reconnect
+                if self.client.connect():
+                    self.after(1000, self.check_cluster_status)
     
     def start_refresh_timer(self):
         """Start the timer for periodic data refresh"""
@@ -461,7 +495,7 @@ def main():
     parser = argparse.ArgumentParser(description="Chat client GUI")
     parser.add_argument(
         "--server",
-        default="localhost:9999",
+        default="localhost:9001",
         help="Server address in format 'host:port' or comma-separated list of addresses for fault tolerance"
     )
     parser.add_argument(
@@ -484,12 +518,14 @@ def main():
         elif args.protocol == "grpc":
             try:
                 client = GRPCChatClient(args.server)
-            except ConnectionError as e:
-                # Handle connection error more gracefully
-                print(f"Warning: Initial connection to server failed: {e}")
-                print("The GUI will still start, but server operations will fail until a connection is established.")
-                # Create a placeholder client that will show connection errors in the GUI
-                client = GRPCChatClient(args.server, allow_connection_failure=True)
+            except Exception as e:
+                logging.error(f"Connection error: {e}")
+                print(f"Warning: Connection to server failed: {e}")
+                print("The GUI will start, but you may need to refresh the connection later.")
+                
+                # Create client but with stub set to None
+                client = GRPCChatClient(args.server)
+                client.stub = None  # Mark as disconnected
         
         # Create and run GUI
         gui = ChatGUI(client)
