@@ -198,13 +198,44 @@ class RaftNode:
         with self.state_lock:
             if self.stop_threads.is_set():
                 return
-                
+            
+            # Only start an election if we're a follower with no known leader,
+            # or if we're a candidate
+            if self.state == ServerState.FOLLOWER and self.leader_id is not None:
+                # We're a follower with a known leader - check if that leader is still reachable
+                try:
+                    if self.leader_id in self.peer_reachable and self.peer_reachable[self.leader_id]:
+                        logging.info(f"Election timeout occurred but leader {self.leader_id} is still reachable. Resetting timer.")
+                        self._reset_election_timer()
+                        return
+                    else:
+                        logging.info(f"Election timeout occurred and leader {self.leader_id} appears unreachable. Starting election.")
+                except Exception:
+                    logging.info("Election timeout occurred and leader status check failed. Starting election.")
+            
+            # In all other cases, start an election
             if self.state != ServerState.LEADER:
                 self._start_election()
     
     def _start_election(self):
         """Start a leader election by becoming a candidate and requesting votes"""
         with self.state_lock:
+            # Add election attempt counter
+            if not hasattr(self, 'consecutive_failed_elections'):
+                self.consecutive_failed_elections = 0
+            
+            self.consecutive_failed_elections += 1
+            
+            # If we've tried too many elections, become a follower and stop
+            if self.consecutive_failed_elections > 5:  # Limit to 5 consecutive failed elections
+                logging.warning(f"Had {self.consecutive_failed_elections} consecutive failed elections. Pausing elections to prevent term inflation.")
+                self.state = ServerState.FOLLOWER
+                self._reset_election_timer()
+                
+                # Schedule a check for leader discovery
+                threading.Timer(2.0, self._check_peer_connectivity).start()
+                return
+            
             # Convert to candidate
             self.state = ServerState.CANDIDATE
             self.current_term += 1
@@ -248,6 +279,7 @@ class RaftNode:
                         # Check if we have a majority of REACHABLE nodes (including self)
                         if votes_received > (len(self.peer_addresses) + 1) // 2:
                             logging.info(f"Won election with {votes_received} votes from {reachable_peers + 1} reachable nodes")
+                            self.consecutive_failed_elections = 0
                             self._become_leader()
                             return
                 
@@ -296,8 +328,11 @@ class RaftNode:
                              f"term={response.term}, vote_granted={response.vote_granted}")
                 
                 # If the response term is higher than ours, update our term and become a follower
+                logging.info(f"Current term: {self.current_term}, response term: {response.term}")
                 if response.term > self.current_term:
                     with self.state_lock:
+                        logging.info(f"Received RequestVote response from {peer_id}: "
+                             f"term={response.term}, vote_granted={response.vote_granted}")
                         old_term = self.current_term
                         self.current_term = response.term
                         self._save_current_term(response.term)
@@ -366,6 +401,27 @@ class RaftNode:
         except Exception as e:
             logging.error(f"Error creating gRPC stub for peer {peer_id}: {e}")
             return None
+    
+    def append_entries(self, term: int, leader_id: str, prev_log_index: int, prev_log_term: int,
+                       entries: List[Dict], leader_commit: int) -> Tuple[int, bool]:
+        """Process an AppendEntries RPC call from the leader"""
+        with self.state_lock:
+            # Add detailed logging about the heartbeat/AppendEntries
+            if not entries:
+                logging.info(f"Received heartbeat from leader {leader_id} for term {term}")
+            else:
+                logging.info(f"Received AppendEntries from leader {leader_id} for term {term} with {len(entries)} entries")
+            
+            # If the leader's term is lower, reject the request
+            if term < self.current_term:
+                logging.info(f"Rejecting AppendEntries: leader term {term} < our term {self.current_term}")
+                return self.current_term, False
+            
+            # Reset the election timer upon receiving valid AppendEntries
+            logging.info(f"Resetting election timer due to heartbeat from leader {leader_id}")
+            self._reset_election_timer()
+            
+            # Rest of the method...
     
     def _append_entries_rpc(self, peer_id: str, prev_log_index: int, prev_log_term: int, 
                           entries: List[chat_pb2.LogEntry] = None) -> Tuple[bool, int]:
@@ -1087,6 +1143,9 @@ class RaftNode:
         """Check connectivity to all configured peers"""
         logging.debug("Checking peer connectivity")
         
+        # First, check if any peer is already a leader, to avoid unnecessary elections
+        leader_found = False
+        
         for peer_id, address in self.peer_addresses.items():
             try:
                 # Try to get or create a stub for this peer
@@ -1098,10 +1157,9 @@ class RaftNode:
                     channel = grpc.insecure_channel(address)
                     stub = chat_pb2_grpc.ChatServiceStub(channel)
                     
-                    # Try a simple call with timeout
-                    # Use StatusRequest instead of PingRequest which doesn't exist
-                    request = chat_pb2.StatusRequest()  # Changed to use StatusRequest
-                    response = stub.GetStatus(request, timeout=1.0)  # Changed to use GetStatus
+                    # Try a simple status call to check connectivity
+                    request = chat_pb2.StatusRequest()
+                    response = stub.GetStatus(request, timeout=1.0)
                     
                     # Store the new stub
                     self.clients[peer_id] = stub
@@ -1110,20 +1168,30 @@ class RaftNode:
                     was_reachable = self.peer_reachable.get(peer_id, False)
                     self.peer_reachable[peer_id] = True
                     
+                    # Check if this peer is a leader
+                    if response.state == chat_pb2.StatusResponse.ServerState.LEADER:
+                        logging.info(f"Discovered peer {peer_id} is a leader for term {response.current_term}")
+                        
+                        with self.state_lock:
+                            # Update our term if peer's term is higher
+                            if response.current_term > self.current_term:
+                                self.current_term = response.current_term
+                                self._save_current_term(self.current_term)
+                            
+                            # Become a follower and acknowledge this leader
+                            if self.state != ServerState.FOLLOWER or self.leader_id != peer_id:
+                                old_state = self.state
+                                self.state = ServerState.FOLLOWER
+                                self.leader_id = peer_id
+                                logging.info(f"Changed state from {old_state} to FOLLOWER as peer {peer_id} is already leader")
+                                self._reset_election_timer()  # Reset timer to avoid unnecessary election
+                        
+                        leader_found = True
+                    
                     if not was_reachable:
                         logging.info(f"Peer {peer_id} at {address} is now reachable")
                         
-                        # If we're currently leader and this is a newly reachable peer,
-                        # initialize nextIndex and matchIndex for it
-                        with self.state_lock:
-                            if self.state == ServerState.LEADER:
-                                # Initialize leader state for this peer
-                                last_log_index, _ = self.persistence.get_last_log_index_and_term()
-                                self.next_index[peer_id] = last_log_index + 1
-                                self.match_index[peer_id] = 0
-                                
-                                # Immediately try to replicate logs to this peer
-                                self._replicate_log_to_peer(peer_id)
+                        # Rest of the method...
             
             except Exception as e:
                 # This peer is unreachable

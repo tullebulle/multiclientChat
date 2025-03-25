@@ -16,12 +16,15 @@ python3 src/run_server.py --node-id 3 --host 10.250.231.222 --port 9003 --db-pat
 ```
 
 ```
-python src/run_server.py --protocol grpc --host 10.250.231.222 --port 9001 --node-id node1 --db-path ./data/node1 --peer node2:10.250.231.222:9002 --peer node3:10.250.121.174:9003
+python src/run_server.py --protocol grpc --host 10.250.231.222 --port 9001 --node-id node1 --db-path ./data/node1.db --peer node2:10.250.231.222:9002 --peer node3:10.250.121.174:9003
 ```
 
 ```
-python src/run_server.py --protocol grpc --host 10.250.231.222 --port 9002 --node-id node2 --db-path ./data/node2 --peer node1:10.250.231.222:9001 --peer node3:10.250.121.174:9003
+python src/run_server.py --protocol grpc --host 10.250.231.222 --port 9002 --node-id node2 --db-path ./data/node2.db --peer node1:10.250.231.222:9001 --peer node3:10.250.121.174:9003
 ```
 
+```
+python src/run_server.py --protocol grpc --host 10.250.121.174 --port 9003 --node-id node3 --db-path ./data/node3.db --peer node1:10.250.231.222:9001 --peer node2:10.250.231.222:9002
+```
 
 
