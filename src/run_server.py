@@ -252,8 +252,6 @@ def main():
                 logging.info(f"Node ID: {args.node_id}")
             if db_path:
                 logging.info(f"Using database at {db_path}")
-            if peer_addresses:
-                logging.info(f"Connected to peers: {list(peer_addresses.keys())}")
             
             # Keep the server running until interrupted
             try:

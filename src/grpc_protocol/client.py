@@ -69,8 +69,7 @@ class GRPCChatClient:
         """
         Connect to a chat server.
         
-        The method first tries to connect to the known leader.
-        If that fails, it tries each server in the list in a round-robin fashion.
+        Tries to connect to any available server in the server list.
         
         Returns:
             bool: True if connected successfully, False otherwise
@@ -81,31 +80,22 @@ class GRPCChatClient:
             self.channel = None
             self.stub = None
         
-        # If we have multiple servers, try each one
-        if len(self.servers) > 1:
-            # Try leader first if known
-            if self.leader_address:
-                logging.info(f"Attempting to connect to known leader at {self.leader_address}")
-                if self._connect_to(self.leader_address):
-                    return True
-                # If leader connection fails, clear the leader address
-                logging.warning(f"Failed to connect to leader at {self.leader_address}")
-                self.leader_address = None
-            
-            # Try all servers
-            logging.info(f"Trying all available servers ({len(self.servers)})")
-            for server in self.servers:
-                logging.info(f"Attempting to connect to server: {server}")
-                if self._connect_to(server):
-                    return True
-            
-            logging.error("Failed to connect to any server")
-            return False
-        else:
-            # Just one server, try it
-            server = self.servers[0]
-            logging.info(f"Attempting to connect to the only available server: {server}")
-            return self._connect_to(server)
+        # Try all servers in the list
+        servers_to_try = list(self.servers)  # Make a copy of the servers list
+        
+        # If we know the leader, try it first
+        if self.leader_address and self.leader_address in servers_to_try:
+            servers_to_try.remove(self.leader_address)
+            servers_to_try.insert(0, self.leader_address)
+        
+        # Try each server until one works
+        for server in servers_to_try:
+            logging.info(f"Attempting to connect to server: {server}")
+            if self._connect_to(server):
+                return True
+        
+        logging.error("Failed to connect to any server")
+        return False
     
     def _connect_to(self, server_address: str) -> bool:
         """

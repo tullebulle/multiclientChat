@@ -72,7 +72,35 @@ class RaftNode:
         """
         self.node_id = node_id
         self.persistence = PersistenceManager(db_path)
-        self.peer_addresses = peer_addresses  # {node_id: address}
+        
+        # Keep all peer addresses
+        self.peer_addresses = peer_addresses.copy()
+        
+        # Track which peers are reachable
+        self.peer_reachable = {}
+        reachable_peers = []
+        unreachable_peers = []
+        
+        # Check which peers are reachable at startup
+        for peer_id, address in peer_addresses.items():
+            try:
+                channel = grpc.insecure_channel(address)
+                future = grpc.channel_ready_future(channel)
+                future.result(timeout=2)  # 2-second timeout
+                
+                self.peer_reachable[peer_id] = True
+                reachable_peers.append(peer_id)
+                logging.info(f"Peer {peer_id} at {address} is reachable")
+            except Exception as e:
+                self.peer_reachable[peer_id] = False
+                unreachable_peers.append(peer_id)
+                logging.warning(f"Peer {peer_id} at {address} is not reachable: {e}")
+        
+        # Log summary
+        if unreachable_peers:
+            logging.warning(f"Found {len(unreachable_peers)} unreachable peers: {unreachable_peers}")
+        if reachable_peers:
+            logging.info(f"Found {len(reachable_peers)} reachable peers: {reachable_peers}")
         
         # Raft state
         self.state = ServerState.FOLLOWER
@@ -108,9 +136,13 @@ class RaftNode:
         # RPC clients
         self.clients = {}  # {node_id: stub}
         
+        # Add a timer for peer discovery
+        self.discovery_timer = None
+        
         # Start threads
         self._reset_election_timer()
         self._start_apply_thread()
+        self._start_peer_discovery()
         
         logging.info(f"Initialized Raft node {node_id} with peers: {list(peer_addresses.keys())}")
     
@@ -183,22 +215,25 @@ class RaftNode:
             
             logging.info(f"Starting election for term {self.current_term}")
             
-            # Request votes from all peers
-            votes_received = 1  # Vote for self
+            # Get list of reachable peers
+            reachable_peers = [peer_id for peer_id, reachable in self.peer_reachable.items() if reachable]
+            logging.info(f"Starting election with {len(reachable_peers)} reachable peers: {reachable_peers}")
             
-            # If there are no peers, we automatically win the election
-            if not self.peer_addresses:
-                logging.info(f"No peers, automatically becoming leader for term {self.current_term}")
+            # Automatic leader if no reachable peers
+            if not reachable_peers:
+                logging.warning(f"No peers reachable. Operating as single-node leader for term {self.current_term}")
                 self._become_leader()
                 return
             
-            for peer_id, peer_address in self.peer_addresses.items():
+            # Request votes from each reachable peer
+            votes_received = 1  # Vote for self
+            for peer_id in reachable_peers:
                 try:
                     # Prepare vote request
                     last_log_index, last_log_term = self.persistence.get_last_log_index_and_term()
                     
-                    # Make the RPC call to request vote
-                    granted = self._request_vote_rpc(
+                    # Use the clearly named method for sending vote requests
+                    granted, peer_last_term, peer_last_index = self.send_vote_request(
                         peer_id,
                         self.current_term,
                         self.node_id,
@@ -210,21 +245,24 @@ class RaftNode:
                     if granted:
                         votes_received += 1
                         
-                        # Check if we have a majority
+                        # Check if we have a majority of REACHABLE nodes (including self)
                         if votes_received > (len(self.peer_addresses) + 1) // 2:
+                            logging.info(f"Won election with {votes_received} votes from {reachable_peers + 1} reachable nodes")
                             self._become_leader()
                             return
                 
                 except Exception as e:
                     logging.error(f"Error requesting vote from {peer_id}: {e}")
+                    # Mark as unreachable for future attempts
+                    self.peer_reachable[peer_id] = False
             
             # Reset election timer if we didn't get enough votes
             self._reset_election_timer()
     
-    def _request_vote_rpc(self, peer_id: str, term: int, candidate_id: str, 
-                          last_log_index: int, last_log_term: int) -> bool:
+    def send_vote_request(self, peer_id: str, term: int, candidate_id: str, 
+                         last_log_index: int, last_log_term: int) -> Tuple[bool, int, int]:
         """
-        Make a RequestVote RPC call to a peer.
+        Send a RequestVote RPC to a peer.
         
         Args:
             peer_id: ID of the peer to request a vote from
@@ -234,14 +272,14 @@ class RaftNode:
             last_log_term: Term of candidate's last log entry
             
         Returns:
-            bool: True if the vote was granted, False otherwise
+            Tuple[bool, int, int]: (vote_granted, peer_last_term, peer_last_index)
         """
         try:
             # Get or create the gRPC stub for this peer
             stub = self._get_peer_stub(peer_id)
             if not stub:
                 logging.warning(f"No stub available for peer {peer_id}")
-                return False
+                return False, 0, 0
             
             # Create the request
             request = chat_pb2.RequestVoteRequest(
@@ -254,51 +292,72 @@ class RaftNode:
             # Make the RPC call with a timeout
             try:
                 response = stub.RequestVote(request, timeout=1.0)
-                logging.debug(f"Received RequestVote response from {peer_id}: "
+                logging.info(f"Received RequestVote response from {peer_id}: "
                              f"term={response.term}, vote_granted={response.vote_granted}")
                 
                 # If the response term is higher than ours, update our term and become a follower
                 if response.term > self.current_term:
                     with self.state_lock:
+                        old_term = self.current_term
                         self.current_term = response.term
                         self._save_current_term(response.term)
                         self.state = ServerState.FOLLOWER
                         self.voted_for = None
                         self._save_voted_for(None)
-                        self.leader_id = None
-                    return False
+                        
+                        # NEW: Set leader_id to the peer if we're stepping down
+                        # This allows us to recognize the peer as a potential leader
+                        self.leader_id = peer_id
+                        logging.info(f"Updated term from {old_term} to {response.term} and became follower. Potential leader: {peer_id}")
+                    
+                    return False, 0, 0
                 
-                return response.vote_granted
+                # NEW: If vote is rejected and we get information that the peer has a more up-to-date log,
+                # become a follower and stop trying to be a leader
+                if not response.vote_granted:
+                    our_last_index, our_last_term = self.persistence.get_last_log_index_and_term()
+                    peer_last_index = getattr(response, 'last_log_index', 0)
+                    peer_last_term = getattr(response, 'last_log_term', 0)
+                    
+                    # Check if peer's log is more up-to-date than ours
+                    if (peer_last_term > our_last_term or 
+                        (peer_last_term == our_last_term and peer_last_index > our_last_index)):
+                        logging.info(f"Peer {peer_id} has more up-to-date log ({peer_last_term}, {peer_last_index}) than ours ({our_last_term}, {our_last_index})")
+                        
+                        with self.state_lock:
+                            self.state = ServerState.FOLLOWER
+                            self.leader_id = peer_id  # Recognize this peer as potential leader
+                            logging.info(f"Becoming follower and accepting {peer_id} as potential leader due to more up-to-date log")
+                        
+                        return False, peer_last_term, peer_last_index
+                
+                return response.vote_granted, 0, 0
             except grpc.RpcError as e:
                 status_code = e.code()
                 if status_code == grpc.StatusCode.DEADLINE_EXCEEDED:
                     logging.warning(f"RequestVote RPC to {peer_id} timed out")
                 else:
                     logging.error(f"RequestVote RPC to {peer_id} failed: {e}")
-                return False
+                return False, 0, 0
         except Exception as e:
             logging.error(f"Error in RequestVote RPC to {peer_id}: {e}")
-            return False
+            return False, 0, 0
     
     def _get_peer_stub(self, peer_id: str) -> Optional[chat_pb2_grpc.ChatServiceStub]:
-        """
-        Get or create a gRPC stub for a peer.
-        
-        Args:
-            peer_id: ID of the peer
-            
-        Returns:
-            Optional[chat_pb2_grpc.ChatServiceStub]: The stub, or None if not available
-        """
+        """Get or create a gRPC stub for a peer."""
         if peer_id in self.clients:
             return self.clients[peer_id]
         
         if peer_id not in self.peer_addresses:
-            logging.warning(f"Unknown peer ID: {peer_id}")
+            logging.error(f"Peer ID '{peer_id}' not in peer_addresses: {list(self.peer_addresses.keys())}")
+            return None
+        
+        # Check if we've recently marked this peer as unreachable
+        if not self.peer_reachable.get(peer_id, True):
+            logging.debug(f"Peer {peer_id} marked as unreachable, skipping stub creation")
             return None
         
         try:
-            # Create a new channel and stub
             peer_address = self.peer_addresses[peer_id]
             channel = grpc.insecure_channel(peer_address)
             stub = chat_pb2_grpc.ChatServiceStub(channel)
@@ -329,10 +388,6 @@ class RaftNode:
                 logging.warning(f"No stub available for peer {peer_id}")
                 return False, 0
             
-            # If no entries were provided, use an empty list (for heartbeats)
-            if entries is None:
-                entries = []
-                
             # Create the request
             with self.state_lock:
                 request = chat_pb2.AppendEntriesRequest(
@@ -340,53 +395,45 @@ class RaftNode:
                     leader_id=self.node_id,
                     prev_log_index=prev_log_index,
                     prev_log_term=prev_log_term,
-                    entries=entries,
+                    entries=entries or [],
                     leader_commit=self.commit_index
                 )
             
-            # Make the RPC call with a timeout
-            try:
-                # Increased timeout to reduce false timeouts
-                response = stub.AppendEntries(request, timeout=2.0)
-                logging.info(f"Received AppendEntries response from {peer_id}: "
-                             f"term={response.term}, success={response.success}, match_index={response.match_index}")
+            # Make the RPC call
+            response = stub.AppendEntries(request, timeout=2.0)
+            
+            # If we got a successful response, update peer reachability
+            logging.debug(f"Peer {peer_id} is reachable")
+            
+            # Process the response
+            with self.state_lock:
+                # If the response term is higher than ours, update our term and become a follower
+                if response.term > self.current_term:
+                    old_term = self.current_term
+                    self.current_term = response.term
+                    self._save_current_term(response.term)
+                    self.state = ServerState.FOLLOWER
+                    self.voted_for = None
+                    self._save_voted_for(None)
+                    self.leader_id = None
+                    logging.info(f"Stepping down: received higher term {response.term} > {old_term} from {peer_id}")
+                    return False, 0
                 
-                with self.state_lock:
-                    # If the response term is higher than ours, update our term and become a follower
-                    if response.term > self.current_term:
-                        old_term = self.current_term
-                        self.current_term = response.term
-                        self._save_current_term(response.term)
-                        self.state = ServerState.FOLLOWER
-                        self.voted_for = None
-                        self._save_voted_for(None)
-                        self.leader_id = None
-                        logging.info(f"Stepping down: received higher term {response.term} > {old_term} from {peer_id}")
-                        return False, 0
+                # Update match index based on response
+                match_index = response.match_index
+                
+                # If request was successful and we sent entries
+                if response.success and entries:
+                    # Update matchIndex for this follower
+                    old_match_index = self.match_index.get(peer_id, 0)
+                    if old_match_index != match_index:
+                        self.match_index[peer_id] = match_index
+                        logging.info(f"Updated match index for {peer_id} from {old_match_index} to {match_index}")
                     
-                    # Update match index based on response
-                    match_index = response.match_index
-                    
-                    # If request was successful and we sent entries
-                    if response.success and entries:
-                        # Update matchIndex for this follower
-                        old_match_index = self.match_index.get(peer_id, 0)
-                        if old_match_index != match_index:
-                            self.match_index[peer_id] = match_index
-                            logging.info(f"Updated match index for {peer_id} from {old_match_index} to {match_index}")
-                        
-                        # Check if we can commit more entries
-                        self._update_commit_index()
-                    
-                    return response.success, match_index
-                    
-            except grpc.RpcError as e:
-                status_code = e.code()
-                if status_code == grpc.StatusCode.DEADLINE_EXCEEDED:
-                    logging.warning(f"AppendEntries RPC to {peer_id} timed out")
-                else:
-                    logging.error(f"AppendEntries RPC to {peer_id} failed: {e}")
-                return False, 0
+                    # Check if we can commit more entries
+                    self._update_commit_index()
+                
+                return response.success, match_index
         except Exception as e:
             logging.error(f"Error in AppendEntries RPC to {peer_id}: {e}", exc_info=True)
             return False, 0
@@ -826,6 +873,10 @@ class RaftNode:
         # Close the persistence manager
         # No explicit close method needed for the PersistenceManager 
 
+        # Cancel the discovery timer
+        if self.discovery_timer:
+            self.discovery_timer.cancel()
+    
     def _handle_create_account(self, data: Dict[str, Any]) -> bool:
         """
         Handle CREATE_ACCOUNT command.
@@ -899,192 +950,6 @@ class RaftNode:
             message_ids=data['message_ids']
         )
     
-    def request_vote(self, term: int, candidate_id: str, last_log_index: int, 
-                     last_log_term: int) -> Tuple[int, bool]:
-        """
-        Process a RequestVote RPC call from a candidate.
-        
-        Args:
-            term: Candidate's term
-            candidate_id: Candidate's ID
-            last_log_index: Index of candidate's last log entry
-            last_log_term: Term of candidate's last log entry
-            
-        Returns:
-            Tuple[int, bool]: (current_term, vote_granted)
-        """
-        with self.state_lock:
-            # If the candidate's term is lower, reject the vote
-            if term < self.current_term:
-                return self.current_term, False
-            
-            # If the candidate's term is higher, update our term and become a follower
-            if term > self.current_term:
-                self.current_term = term
-                self._save_current_term(term)
-                self.state = ServerState.FOLLOWER
-                self.voted_for = None
-                self._save_voted_for(None)
-                self.leader_id = None
-            
-            # Check if we can vote for this candidate
-            can_vote = (self.voted_for is None or self.voted_for == candidate_id)
-            
-            # Check if candidate's log is at least as up-to-date as ours
-            our_last_index, our_last_term = self.persistence.get_last_log_index_and_term()
-            log_is_current = (last_log_term > our_last_term or 
-                            (last_log_term == our_last_term and last_log_index >= our_last_index))
-            
-            # Grant vote if conditions are met
-            if can_vote and log_is_current:
-                self.voted_for = candidate_id
-                self._save_voted_for(candidate_id)
-                
-                # Reset the election timer upon voting
-                self._reset_election_timer()
-                
-                logging.info(f"Granting vote to {candidate_id} for term {term}")
-                return self.current_term, True
-            
-            return self.current_term, False
-    
-    def append_entries(self, term: int, leader_id: str, prev_log_index: int, prev_log_term: int,
-                       entries: List[Dict], leader_commit: int) -> Tuple[int, bool]:
-        """
-        Process an AppendEntries RPC call from the leader.
-        
-        Args:
-            term: Leader's term
-            leader_id: Leader's ID
-            prev_log_index: Index of log entry immediately preceding new ones
-            prev_log_term: Term of prev_log_index entry
-            entries: Log entries to store (empty for heartbeat)
-            leader_commit: Leader's commit index
-            
-        Returns:
-            Tuple[int, bool]: (current_term, success)
-        """
-        with self.state_lock:
-            try:
-                # If the leader's term is lower, reject the request
-                if term < self.current_term:
-                    return self.current_term, False
-                
-                # Reset the election timer upon receiving valid AppendEntries
-                self._reset_election_timer()
-                
-                # If the leader's term is higher or we're a candidate, update our term and become a follower
-                if term > self.current_term or self.state == ServerState.CANDIDATE:
-                    self.current_term = term
-                    self._save_current_term(term)
-                    self.state = ServerState.FOLLOWER
-                    self.voted_for = None
-                    self._save_voted_for(None)
-                
-                # Update leader ID
-                self.leader_id = leader_id
-                
-                # Check if we have the previous log entry
-                log_entry = self.persistence.get_log_entry(prev_log_index)
-                if prev_log_index > 0 and (log_entry is None or log_entry['term'] != prev_log_term):
-                    logging.warning(f"Log consistency check failed: prev_log_index={prev_log_index}, prev_log_term={prev_log_term}")
-                    # Return current matching index to help leader update nextIndex faster
-                    last_match = 0
-                    # Find the highest index we have that matches the leader's log
-                    for i in range(prev_log_index - 1, 0, -1):
-                        entry = self.persistence.get_log_entry(i)
-                        if entry:
-                            last_match = i
-                            break
-                    return self.current_term, False
-                
-                # Process log entries
-                if entries:
-                    logging.info(f"Processing {len(entries)} log entries from leader")
-                    
-                    # Find and handle any conflicting entries
-                    conflict_found = False
-                    for i, entry in enumerate(entries):
-                        try:
-                            entry_index = entry['index']
-                            existing_entry = self.persistence.get_log_entry(entry_index)
-                            
-                            # If we have an entry with same index but different term, or we haven't reached this index yet
-                            if existing_entry is None or existing_entry['term'] != entry['term']:
-                                conflict_found = True
-                                # Delete this entry and all that follow
-                                logging.info(f"Found conflicting entry at index {entry_index}, removing this and all following entries")
-                                self.persistence.delete_logs_from(entry_index)
-                                
-                                # Append new entries starting from this point
-                                for new_entry in entries[i:]:
-                                    try:
-                                        # Convert command_type from integer to CommandType enum
-                                        # Handle different possible types
-                                        command_type_value = new_entry['command_type']
-                                        if isinstance(command_type_value, CommandType):
-                                            command_type = command_type_value
-                                        elif isinstance(command_type_value, int):
-                                            command_type = CommandType(command_type_value)
-                                        elif isinstance(command_type_value, str):
-                                            command_type = CommandType(int(command_type_value))
-                                        else:
-                                            # As a last resort, try direct conversion
-                                            logging.warning(f"Unknown command_type type: {type(command_type_value)}, value: {command_type_value}")
-                                            command_type = CommandType(1)  # Default to CREATE_ACCOUNT as fallback
-                                        
-                                        # Ensure data is properly handled
-                                        data = new_entry['data']
-                                        if isinstance(data, str):
-                                            try:
-                                                data = json.loads(data)
-                                            except json.JSONDecodeError:
-                                                # If it's not valid JSON, keep it as is
-                                                pass
-                                        
-                                        new_entry_index = self.persistence.append_log_entry(
-                                            term=int(new_entry['term']),
-                                            command_type=command_type,  # Use the CommandType enum
-                                            data=data,
-                                            force_index=int(new_entry['index'])  # Force the same index as the leader
-                                        )
-                                        logging.info(f"Appended log entry at index {new_entry_index}, term {new_entry['term']}")
-                                    except Exception as e:
-                                        logging.error(f"Error appending log entry: {e}", exc_info=True)
-                                break
-                        except Exception as e:
-                            logging.error(f"Error handling log entry: {e}", exc_info=True)
-                    
-                    # If no conflicts found and we have all the entries already, log that
-                    if not conflict_found:
-                        logging.info("No conflicting entries found, log already up to date")
-                
-                # Update commit index and apply entries if leader's commit index is higher
-                if leader_commit > self.commit_index:
-                    old_commit_index = self.commit_index
-                    # Commit up to leader_commit or our last log entry, whichever is smaller
-                    last_log_index, _ = self.persistence.get_last_log_index_and_term()
-                    self.commit_index = min(leader_commit, last_log_index)
-                    
-                    logging.info(f"Updating commit index from {old_commit_index} to {self.commit_index}")
-                    
-                    # Save the updated indices to persistent storage
-                    self._save_indices()
-                    
-                    # Apply newly committed entries immediately
-                    for i in range(old_commit_index + 1, self.commit_index + 1):
-                        self._apply_log_entry(i)
-                        self.last_applied = i
-                        logging.info(f"Applied log entry at index {i}")
-                    
-                    # Save the updated indices again after applying entries
-                    self._save_indices()
-                
-                return self.current_term, True
-            except Exception as e:
-                logging.error(f"Error in append_entries: {e}", exc_info=True)
-                return self.current_term, False
-    
     def _become_leader(self):
         """Transition to leader state and initialize leader state variables"""
         with self.state_lock:
@@ -1112,7 +977,9 @@ class RaftNode:
             if self.state != ServerState.LEADER:
                 return
                 
-            logging.debug(f"Sending heartbeats to {len(self.peer_addresses)} peers")
+            # Only log heartbeat attempts at DEBUG level
+            logging.debug(f"Sending heartbeats to peers")
+            
             successful_peers = 0
             for peer_id in self.peer_addresses:
                 try:
@@ -1143,6 +1010,12 @@ class RaftNode:
                 if self.state != ServerState.LEADER:
                     return
                 
+                # Skip peers we already know are unreachable to avoid log spam
+                if not self.peer_reachable.get(peer_id, False):
+                    # Silent skip - only log at DEBUG level
+                    logging.debug(f"Skipping heartbeat to unreachable peer {peer_id}")
+                    return
+                
                 # Get last log index and term for consistency check
                 # Use the peer's next_index - 1 for prev_log_index
                 next_idx = self.next_index.get(peer_id, 1)
@@ -1153,6 +1026,14 @@ class RaftNode:
                     prev_entry = self.persistence.get_log_entry(prev_log_idx)
                     if prev_entry:
                         prev_log_term = prev_entry['term']
+                
+                # Try to get a stub
+                stub = self._get_peer_stub(peer_id)
+                if not stub:
+                    # Peer just became unreachable - log it once and mark as unreachable
+                    logging.warning(f"Peer {peer_id} became unreachable, will skip future heartbeats until reconnection")
+                    self.peer_reachable[peer_id] = False
+                    return
                 
                 # Send empty AppendEntries as heartbeat, but include commit index
                 success, match_idx = self._append_entries_rpc(
@@ -1174,9 +1055,13 @@ class RaftNode:
                     old_next_idx = next_idx
                     self.next_index[peer_id] = max(1, next_idx - 1)
                     logging.info(f"Heartbeat failed to {peer_id}, decreasing nextIndex from {old_next_idx} to {self.next_index[peer_id]}")
+                    # Mark peer as unreachable
+                    self.peer_reachable[peer_id] = False
         except Exception as e:
-            logging.error(f"Error sending heartbeat to {peer_id}: {e}", exc_info=True) 
-
+            logging.error(f"Error sending heartbeat to {peer_id}: {e}", exc_info=True)
+            # Mark peer as unreachable
+            self.peer_reachable[peer_id] = False
+    
     def _save_indices(self):
         """Save current commit and last applied indices to persistent storage"""
         try:
@@ -1186,4 +1071,124 @@ class RaftNode:
             return True
         except Exception as e:
             logging.error(f"Error saving indices: {e}")
-            return False 
+            return False
+
+    def _start_peer_discovery(self):
+        """Start the thread that periodically checks peer connectivity"""
+        if not self.stop_threads.is_set():
+            self._check_peer_connectivity()
+            
+            # Schedule next check
+            self.discovery_timer = threading.Timer(5.0, self._start_peer_discovery)  # Check every 5 seconds
+            self.discovery_timer.daemon = True
+            self.discovery_timer.start()
+
+    def _check_peer_connectivity(self):
+        """Check connectivity to all configured peers"""
+        logging.debug("Checking peer connectivity")
+        
+        for peer_id, address in self.peer_addresses.items():
+            try:
+                # Try to get or create a stub for this peer
+                old_stub = self.clients.get(peer_id)
+                
+                # If we don't have a stub or the peer was previously unreachable, try to create one
+                if old_stub is None or not self.peer_reachable.get(peer_id, False):
+                    # Create a new channel and stub
+                    channel = grpc.insecure_channel(address)
+                    stub = chat_pb2_grpc.ChatServiceStub(channel)
+                    
+                    # Try a simple call with timeout
+                    # Use StatusRequest instead of PingRequest which doesn't exist
+                    request = chat_pb2.StatusRequest()  # Changed to use StatusRequest
+                    response = stub.GetStatus(request, timeout=1.0)  # Changed to use GetStatus
+                    
+                    # Store the new stub
+                    self.clients[peer_id] = stub
+                    
+                    # Update reachability
+                    was_reachable = self.peer_reachable.get(peer_id, False)
+                    self.peer_reachable[peer_id] = True
+                    
+                    if not was_reachable:
+                        logging.info(f"Peer {peer_id} at {address} is now reachable")
+                        
+                        # If we're currently leader and this is a newly reachable peer,
+                        # initialize nextIndex and matchIndex for it
+                        with self.state_lock:
+                            if self.state == ServerState.LEADER:
+                                # Initialize leader state for this peer
+                                last_log_index, _ = self.persistence.get_last_log_index_and_term()
+                                self.next_index[peer_id] = last_log_index + 1
+                                self.match_index[peer_id] = 0
+                                
+                                # Immediately try to replicate logs to this peer
+                                self._replicate_log_to_peer(peer_id)
+            
+            except Exception as e:
+                # This peer is unreachable
+                was_reachable = self.peer_reachable.get(peer_id, False)
+                self.peer_reachable[peer_id] = False
+                
+                if was_reachable:
+                    logging.warning(f"Peer {peer_id} at {address} is now unreachable: {e}")
+                
+                # Clean up the stub if it exists
+                if peer_id in self.clients:
+                    del self.clients[peer_id] 
+
+    def handle_incoming_vote_request(self, term: int, candidate_id: str, last_log_index: int, last_log_term: int) -> Tuple[int, bool]:
+        """
+        Process an incoming RequestVote RPC from a candidate.
+        
+        Args:
+            term: Candidate's term
+            candidate_id: Candidate's ID
+            last_log_index: Index of candidate's last log entry
+            last_log_term: Term of candidate's last log entry
+            
+        Returns:
+            Tuple[int, bool]: (current_term, vote_granted)
+        """
+        with self.state_lock:
+            # If the candidate's term is lower, reject the vote
+            if term < self.current_term:
+                logging.info(f"Rejecting vote for {candidate_id}: their term {term} < our term {self.current_term}")
+                return self.current_term, False
+            
+            # If the candidate's term is higher, update our term and become a follower
+            if term > self.current_term:
+                old_term = self.current_term
+                self.current_term = term
+                self._save_current_term(term)
+                self.state = ServerState.FOLLOWER
+                self.voted_for = None
+                self._save_voted_for(None)
+                self.leader_id = None
+                logging.info(f"Updated term: {old_term} -> {term} due to RequestVote from {candidate_id}")
+            
+            # Check if we can vote for this candidate
+            can_vote = (self.voted_for is None or self.voted_for == candidate_id)
+            if not can_vote:
+                logging.info(f"Rejecting vote for {candidate_id}: already voted for {self.voted_for} in term {term}")
+            
+            # Check if candidate's log is at least as up-to-date as ours
+            our_last_index, our_last_term = self.persistence.get_last_log_index_and_term()
+            log_is_current = (last_log_term > our_last_term or 
+                            (last_log_term == our_last_term and last_log_index >= our_last_index))
+            
+            if not log_is_current:
+                logging.info(f"Rejecting vote for {candidate_id}: their log ({last_log_term}, {last_log_index}) is behind ours ({our_last_term}, {our_last_index})")
+            
+            # Grant vote if conditions are met
+            if can_vote and log_is_current:
+                self.voted_for = candidate_id
+                self._save_voted_for(candidate_id)
+                
+                # Reset the election timer upon voting
+                self._reset_election_timer()
+                
+                logging.info(f"Granting vote to {candidate_id} for term {term}")
+                return self.current_term, True
+            
+            return self.current_term, False

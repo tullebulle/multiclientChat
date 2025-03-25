@@ -139,8 +139,11 @@ message RequestVoteRequest {
 }
 
 message RequestVoteResponse {
-    int32 term = 1;             // Current term, for candidate to update itself
-    bool vote_granted = 2;      // True means candidate received vote
+  int32 term = 1;
+  bool vote_granted = 2;
+  // Add these fields to communicate log state
+  int32 last_log_index = 3;
+  int32 last_log_term = 4;
 }
 
 // AppendEntries RPC

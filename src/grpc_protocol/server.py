@@ -423,10 +423,10 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             )
     
     def RequestVote(self, request: chat_pb2.RequestVoteRequest, context: grpc.ServicerContext) -> chat_pb2.RequestVoteResponse:
-        """Handle RequestVote RPC from Raft"""
+        """Handle INCOMING RequestVote RPC from Raft"""
         try:
-            # Forward the request to the RaftNode
-            current_term, vote_granted = self.raft_node.request_vote(
+            # Use the correctly named method for handling incoming vote requests
+            current_term, vote_granted = self.raft_node.handle_incoming_vote_request(
                 term=request.term,
                 candidate_id=request.candidate_id,
                 last_log_index=request.last_log_index,
@@ -439,7 +439,7 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                 vote_granted=vote_granted
             )
         except Exception as e:
-            logging.error(f"Error processing RequestVote: {e}")
+            logging.error(f"Error processing RequestVote: {e}", exc_info=True)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return chat_pb2.RequestVoteResponse(
