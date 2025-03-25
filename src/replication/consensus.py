@@ -198,22 +198,7 @@ class RaftNode:
         with self.state_lock:
             if self.stop_threads.is_set():
                 return
-            
-            # Only start an election if we're a follower with no known leader,
-            # or if we're a candidate
-            if self.state == ServerState.FOLLOWER and self.leader_id is not None:
-                # We're a follower with a known leader - check if that leader is still reachable
-                try:
-                    if self.leader_id in self.peer_reachable and self.peer_reachable[self.leader_id]:
-                        logging.info(f"Election timeout occurred but leader {self.leader_id} is still reachable. Resetting timer.")
-                        self._reset_election_timer()
-                        return
-                    else:
-                        logging.info(f"Election timeout occurred and leader {self.leader_id} appears unreachable. Starting election.")
-                except Exception:
-                    logging.info("Election timeout occurred and leader status check failed. Starting election.")
-            
-            # In all other cases, start an election
+                
             if self.state != ServerState.LEADER:
                 self._start_election()
     
@@ -406,22 +391,141 @@ class RaftNode:
                        entries: List[Dict], leader_commit: int) -> Tuple[int, bool]:
         """Process an AppendEntries RPC call from the leader"""
         with self.state_lock:
-            # Add detailed logging about the heartbeat/AppendEntries
-            if not entries:
-                logging.info(f"Received heartbeat from leader {leader_id} for term {term}")
-            else:
-                logging.info(f"Received AppendEntries from leader {leader_id} for term {term} with {len(entries)} entries")
+            try:
+                # Add detailed logging about the heartbeat/AppendEntries
+                if not entries:
+                    logging.info(f"Received heartbeat from leader {leader_id} for term {term}")
+                else:
+                    logging.info(f"Received AppendEntries from leader {leader_id} for term {term} with {len(entries)} entries")
+                
+                # If the leader's term is lower, reject the request
+                if term < self.current_term:
+                    logging.info(f"Rejecting AppendEntries: leader term {term} < our term {self.current_term}")
+                    return self.current_term, False
+                
+                # Reset the election timer upon receiving valid AppendEntries
+                logging.info(f"Resetting election timer due to heartbeat from leader {leader_id}")
+                self._reset_election_timer()
             
-            # If the leader's term is lower, reject the request
-            if term < self.current_term:
-                logging.info(f"Rejecting AppendEntries: leader term {term} < our term {self.current_term}")
+                # If the leader's term is higher or we're a candidate, update our term and become a follower
+                if term > self.current_term or self.state == ServerState.CANDIDATE:
+                    self.current_term = term
+                    self._save_current_term(term)
+                    self.state = ServerState.FOLLOWER
+                    self.voted_for = None
+                    self._save_voted_for(None)
+                
+                # Update leader ID
+                self.leader_id = leader_id
+                
+                # Check if we have the previous log entry
+                log_entry = None
+                if prev_log_index > 0:
+                    log_entry = self.persistence.get_log_entry(prev_log_index)
+                
+                # Log consistency check: we need the previous entry to match
+                if prev_log_index > 0 and (log_entry is None or log_entry['term'] != prev_log_term):
+                    logging.warning(f"Log consistency check failed: prev_log_index={prev_log_index}, prev_log_term={prev_log_term}")
+                    # Return current matching index to help leader update nextIndex faster
+                    last_match = 0
+                    # Find the highest index we have that matches the leader's log
+                    for i in range(prev_log_index - 1, 0, -1):
+                        entry = self.persistence.get_log_entry(i)
+                        if entry:
+                            last_match = i
+                            break
+                    return self.current_term, False
+                
+                # Process log entries
+                if entries:
+                    logging.info(f"Processing {len(entries)} log entries from leader")
+                    
+                    # Find and handle any conflicting entries
+                    conflict_found = False
+                    for i, entry in enumerate(entries):
+                        try:
+                            entry_index = entry['index']
+                            existing_entry = self.persistence.get_log_entry(entry_index)
+                            
+                            # If we have an entry with same index but different term, or we haven't reached this index yet
+                            if existing_entry is None or existing_entry['term'] != entry['term']:
+                                conflict_found = True
+                                # Delete this entry and all that follow
+                                logging.info(f"Found conflicting entry at index {entry_index}, removing this and all following entries")
+                                self.persistence.delete_logs_from(entry_index)
+                                
+                                # Append new entries starting from this point
+                                for new_entry in entries[i:]:
+                                    try:
+                                        # Convert command_type from integer to CommandType enum if needed
+                                        command_type_value = new_entry['command_type']
+                                        if isinstance(command_type_value, CommandType):
+                                            command_type = command_type_value
+                                        elif isinstance(command_type_value, int):
+                                            command_type = CommandType(command_type_value)
+                                        elif isinstance(command_type_value, str):
+                                            command_type = CommandType(int(command_type_value))
+                                        else:
+                                            # Fallback
+                                            logging.warning(f"Unknown command_type type: {type(command_type_value)}")
+                                            command_type = CommandType(1)  # Default to CREATE_ACCOUNT
+                                        
+                                        # Ensure data is properly handled
+                                        data = new_entry['data']
+                                        if isinstance(data, str):
+                                            try:
+                                                data = json.loads(data)
+                                            except json.JSONDecodeError:
+                                                # If it's not valid JSON, keep it as is
+                                                pass
+                                        
+                                        # Append the entry to our log
+                                        new_entry_index = self.persistence.append_log_entry(
+                                            term=int(new_entry['term']),
+                                            command_type=command_type,
+                                            data=data,
+                                            force_index=int(new_entry['index'])  # Force the same index as the leader
+                                        )
+                                        logging.info(f"Appended log entry at index {new_entry_index}, term {new_entry['term']}")
+                                    except Exception as e:
+                                        logging.error(f"Error appending log entry: {e}", exc_info=True)
+                                break
+                        except Exception as e:
+                            logging.error(f"Error handling log entry: {e}", exc_info=True)
+                    
+                    # If no conflicts found and we have all the entries already, log that
+                    if not conflict_found:
+                        logging.info("No conflicting entries found, log already up to date")
+                
+                # Update commit index and apply entries if leader's commit index is higher
+                if leader_commit > self.commit_index:
+                    old_commit_index = self.commit_index
+                    # Commit up to leader_commit or our last log entry, whichever is smaller
+                    last_log_index, _ = self.persistence.get_last_log_index_and_term()
+                    self.commit_index = min(leader_commit, last_log_index)
+                    
+                    logging.info(f"Updating commit index from {old_commit_index} to {self.commit_index}")
+                    
+                    # Save the updated indices to persistent storage
+                    self._save_indices()
+                    
+                    # Apply newly committed entries immediately
+                    for i in range(old_commit_index + 1, self.commit_index + 1):
+                        try:
+                            self._apply_log_entry(i)
+                            self.last_applied = i
+                            logging.info(f"Applied log entry at index {i}")
+                        except Exception as e:
+                            logging.error(f"Error applying log entry at index {i}: {e}")
+                    
+                    # Save the updated indices again after applying entries
+                    self._save_indices()
+                
+                return self.current_term, True
+                
+            except Exception as e:
+                logging.error(f"Error in append_entries: {e}", exc_info=True)
                 return self.current_term, False
-            
-            # Reset the election timer upon receiving valid AppendEntries
-            logging.info(f"Resetting election timer due to heartbeat from leader {leader_id}")
-            self._reset_election_timer()
-            
-            # Rest of the method...
     
     def _append_entries_rpc(self, peer_id: str, prev_log_index: int, prev_log_term: int, 
                           entries: List[chat_pb2.LogEntry] = None) -> Tuple[bool, int]:
@@ -1191,7 +1295,17 @@ class RaftNode:
                     if not was_reachable:
                         logging.info(f"Peer {peer_id} at {address} is now reachable")
                         
-                        # Rest of the method...
+                        # If we're currently leader and this is a newly reachable peer,
+                        # initialize nextIndex and matchIndex for it
+                        with self.state_lock:
+                            if self.state == ServerState.LEADER:
+                                # Initialize leader state for this peer
+                                last_log_index, _ = self.persistence.get_last_log_index_and_term()
+                                self.next_index[peer_id] = last_log_index + 1
+                                self.match_index[peer_id] = 0
+                                
+                                # Immediately try to replicate logs to this peer
+                                self._replicate_log_to_peer(peer_id)
             
             except Exception as e:
                 # This peer is unreachable
@@ -1203,7 +1317,14 @@ class RaftNode:
                 
                 # Clean up the stub if it exists
                 if peer_id in self.clients:
-                    del self.clients[peer_id] 
+                    del self.clients[peer_id]
+        
+        # If we found a leader among our peers, make sure we're not trying to become leader
+        if leader_found:
+            with self.state_lock:
+                logging.info(f"Found leader among peers, stopping election attempts")
+                self.state = ServerState.FOLLOWER
+                self._reset_election_timer()
 
     def handle_incoming_vote_request(self, term: int, candidate_id: str, last_log_index: int, last_log_term: int) -> Tuple[int, bool]:
         """
