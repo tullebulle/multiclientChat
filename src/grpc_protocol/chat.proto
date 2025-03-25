@@ -16,6 +16,14 @@ service ChatService {
     rpc MarkRead (MarkReadRequest) returns (MarkReadResponse);
     rpc DeleteMessages (DeleteMessagesRequest) returns (DeleteMessagesResponse);
     rpc GetUnreadCount (UnreadCountRequest) returns (UnreadCountResponse);
+    
+    // Raft consensus protocol RPCs
+    rpc RequestVote (RequestVoteRequest) returns (RequestVoteResponse);
+    rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
+    rpc GetClusterStatus (ClusterStatusRequest) returns (ClusterStatusResponse);
+    
+    // Status messages
+    rpc GetStatus (StatusRequest) returns (StatusResponse);
 }
 
 // Account management messages
@@ -110,4 +118,78 @@ message UnreadCountRequest {}
 message UnreadCountResponse {
     uint32 count = 1;
     string error_message = 2;
+}
+
+// Raft consensus protocol messages
+
+// Log entry for replication
+message LogEntry {
+    int32 index = 1;
+    int32 term = 2;
+    int32 command_type = 3;
+    string data = 4;  // JSON-encoded command data
+}
+
+// RequestVote RPC
+message RequestVoteRequest {
+    int32 term = 1;               // Candidate's term
+    string candidate_id = 2;      // Candidate requesting vote
+    int32 last_log_index = 3;     // Index of candidate's last log entry
+    int32 last_log_term = 4;      // Term of candidate's last log entry
+}
+
+message RequestVoteResponse {
+    int32 term = 1;             // Current term, for candidate to update itself
+    bool vote_granted = 2;      // True means candidate received vote
+}
+
+// AppendEntries RPC
+message AppendEntriesRequest {
+    int32 term = 1;               // Leader's term
+    string leader_id = 2;         // So follower can redirect clients
+    int32 prev_log_index = 3;     // Index of log entry immediately preceding new ones
+    int32 prev_log_term = 4;      // Term of prev_log_index entry
+    repeated LogEntry entries = 5; // Log entries to store (empty for heartbeat)
+    int32 leader_commit = 6;      // Leader's commit index
+}
+
+message AppendEntriesResponse {
+    int32 term = 1;        // Current term, for leader to update itself
+    bool success = 2;      // True if follower contained entry matching prev_log_index and prev_log_term
+    int32 match_index = 3; // The highest log entry index known to be replicated on server
+}
+
+// Get cluster status
+message ClusterStatusRequest {}
+
+message ClusterStatusResponse {
+    string node_id = 1;         // This node's ID
+    string state = 2;           // Current state: FOLLOWER, CANDIDATE, or LEADER
+    int32 current_term = 3;     // Current term
+    string leader_id = 4;       // Current leader ID (if known)
+    int32 commit_index = 5;     // Commit index
+    int32 last_applied = 6;     // Last applied index
+    int32 peer_count = 7;       // Number of peers
+    int32 log_count = 8;        // Number of log entries
+}
+
+// Status messages
+message StatusRequest {
+    // No parameters needed
+}
+
+message StatusResponse {
+    enum ServerState {
+        UNKNOWN = 0;
+        FOLLOWER = 1;
+        CANDIDATE = 2;
+        LEADER = 3;
+    }
+    
+    ServerState state = 1;
+    int32 current_term = 2;
+    string leader_id = 3;
+    int32 commit_index = 4;
+    int32 last_applied = 5;
+    string error_message = 6;
 } 

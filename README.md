@@ -15,6 +15,55 @@ You need Python with TKinter installed to run the gui. To get this, you can use 
 sudo apt-get install python3-tk
 ```
 
+## Project Structure
+
+The project is organized into the following directories:
+
+- `src/`: Source code for the chat application
+- `scripts/`: Scripts for cluster management and setup
+- `tools/`: Diagnostic and testing tools
+- `docs/`: Documentation and guides
+- `logs/`: Server logs
+- `data/`: Database files and storage
+
+## Running with Raft Consensus
+
+The application now includes a distributed consensus implementation using the Raft algorithm.
+
+### Starting a Raft Cluster
+
+To start a cluster with multiple nodes:
+
+```bash
+python scripts/start_cluster_mp.py start
+```
+
+To stop the cluster:
+
+```bash
+python scripts/start_cluster_mp.py stop
+```
+
+To reset the cluster (clear all data and restart):
+
+```bash
+python scripts/reset_cluster.py
+```
+
+### Testing Raft Consensus
+
+For detailed testing instructions, see:
+
+```bash
+cat docs/testing_raft_consensus.md
+```
+
+Or run the diagnostic tool directly:
+
+```bash
+python tools/diagnose_replication.py
+```
+
 
 ### Running the server and client
 To run the server, use the following command from the root directory:
@@ -65,6 +114,7 @@ This multiclient chat application demonstrates different approaches to client-se
 - Two protocol implementations: Custom Binary Protocol and JSON Protocol
 - Graphical user interface built with Tkinter
 - Thread-safe server implementation
+- Distributed consensus with Raft algorithm for high availability
 
 ### Features
 - User account management (create, login, delete)

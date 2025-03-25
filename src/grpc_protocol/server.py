@@ -9,60 +9,100 @@ simultaneous client connections using gRPC.
 import grpc
 from concurrent import futures
 import logging
-from datetime import datetime
+import os
 import time
 import threading
+import uuid
+import json
+from typing import Dict, List, Optional
 
 from . import chat_pb2
 from . import chat_pb2_grpc
+from src.replication.persistence import PersistenceManager, CommandType
+from src.replication.consensus import RaftNode, ServerState, NotLeaderError
 
 class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
     """
     Implementation of the ChatService gRPC service.
     
     This class implements all the RPC methods defined in the chat.proto file.
-    It uses the ChatServer base class for core functionality while providing
-    the gRPC interface.
+    It uses the PersistenceManager class for storing and retrieving data, ensuring
+    data persistence across server restarts.
+
+    It also integrates with the Raft consensus algorithm for fault tolerance.
 
     Attributes:
-        accounts: Dictionary mapping usernames to passwords
-        messages: List of all messages in the system
-        next_message_id: Counter for generating unique message IDs
+        raft_node: The RaftNode instance for consensus
         messages_lock: Lock for thread-safe message operations
         accounts_lock: Lock for thread-safe account operations
     """
     
-    def __init__(self):
+    def __init__(self, db_path=None, node_id=None, peer_addresses=None):
+        """
+        Initialize the ChatServicer.
+        
+        Args:
+            db_path: Path to the SQLite database file. If None, a UUID-based path will be used.
+            node_id: ID of this node in the Raft cluster. If None, a UUID will be used.
+            peer_addresses: Dictionary mapping peer node IDs to their addresses.
+        """
         self.messages_lock = threading.Lock()
-        self.messages = []  # Initialize empty messages list
-        self.next_message_id = 1 # Counter for message IDs
-
         self.account_lock = threading.Lock()
-        self.accounts = {}  # Store accounts directly in the servicer
+        
+        # Set up persistence
+        if db_path is None:
+            # Create a unique database file if none specified
+            db_path = f"{uuid.uuid4()}.db"
+        
+        # Set up Raft node
+        if node_id is None:
+            node_id = str(uuid.uuid4())
+        
+        if peer_addresses is None:
+            peer_addresses = {}
+        
+        # Initialize Raft node with persistence manager
+        self.raft_node = RaftNode(node_id=node_id, db_path=db_path, peer_addresses=peer_addresses)
+        
+        logging.info(f"Initialized ChatServicer with node_id={node_id}, db_path={db_path}, "
+                    f"peers={list(peer_addresses.keys())}")
     
     def CreateAccount(self, request, context):
         """Create a new user account"""
-        
         try:
+            username = request.username
+            password_hash = request.password_hash
+            
             with self.account_lock:
-                # Check if username already exists (case-insensitive)
-                username_lower = request.username.lower()
-                for existing_username in self.accounts.keys():
-                    if existing_username.lower() == username_lower:
+                try:
+                    # Only leaders can process write operations
+                    success = self.raft_node.create_account(
+                        username=username,
+                        password_hash=password_hash
+                    )
+                    
+                    if success:
+                        logging.info(f"Created new account for user: {username}")
+                        return chat_pb2.CreateAccountResponse(
+                            success=True,
+                            error_message=""
+                        )
+                    else:
+                        error_message = f"Failed to create account: username '{username}' already exists"
+                        logging.warning(error_message)
                         return chat_pb2.CreateAccountResponse(
                             success=False,
-                            error_message="Username already exists"
+                            error_message=error_message
                         )
-                
-                # Create new account
-                self.accounts[request.username] = request.password_hash
-                logging.info(f"Created new account for user: {request.username}")
-                
-            return chat_pb2.CreateAccountResponse(
-                success=True,
-                error_message=""
-            )
+                except NotLeaderError as e:
+                    context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+                    context.set_details(str(e))
+                    return chat_pb2.CreateAccountResponse(
+                        success=False,
+                        error_message=f"Not the leader. Try {e.leader_id}"
+                    )
         except Exception as e:
+            logging.error(f"Error creating account: {e}")
             return chat_pb2.CreateAccountResponse(
                 success=False,
                 error_message=str(e)
@@ -75,9 +115,13 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             password_hash = request.password_hash
             
             with self.account_lock:
-                # Check if user exists and password matches
-                if (username in self.accounts and 
-                    self.accounts[username] == password_hash):
+                # Use the persistence manager directly for read-only operations
+                success = self.raft_node.persistence.authenticate_user(
+                    username=username,
+                    password_hash=password_hash
+                )
+                
+                if success:
                     logging.info(f"User authenticated successfully: {username}")
                     return chat_pb2.AuthResponse(
                         success=True,
@@ -107,33 +151,42 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             )
             
         try:
+            # First verify recipient exists (read-only operation)
             with self.account_lock:
-                # Verify recipient exists
-                if request.recipient not in self.accounts:
+                users = self.raft_node.persistence.list_users(request.recipient)
+                if request.recipient not in users:
                     return chat_pb2.SendMessageResponse(
                         message_id=0,
                         error_message="Recipient does not exist"
                     )
-                
-                with self.messages_lock:              
-                    # Create and store the message
-                    msg_id = self.next_message_id
-                    self.next_message_id += 1
-                    msg = chat_pb2.Message(
-                        id=msg_id,
-                        sender=username,
-                        recipient=request.recipient,
-                        content=request.content,
-                        timestamp=int(time.time()),
-                        is_read=False
-                    )
-                    self.messages.append(msg)
             
+            # Forward to leader if this node is not the leader
+            try:
+                message_id = self.raft_node.send_message(
+                    sender=username,
+                    recipient=request.recipient,
+                    content=request.content
+                )
+                
+                if message_id > 0:
                     return chat_pb2.SendMessageResponse(
-                        message_id=msg_id,
+                        message_id=message_id,
                         error_message=""
                     )
+                else:
+                    return chat_pb2.SendMessageResponse(
+                        message_id=0,
+                        error_message="Failed to send message"
+                    )
+            except NotLeaderError as e:
+                context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+                context.set_details(str(e))
+                return chat_pb2.SendMessageResponse(
+                    message_id=0,
+                    error_message=f"Not the leader. Try {e.leader_id}"
+                )
         except Exception as e:
+            logging.error(f"Error sending message: {e}")
             return chat_pb2.SendMessageResponse(
                 message_id=0,
                 error_message=str(e)
@@ -150,19 +203,36 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                 error_message="Not authenticated"
             )
 
-        with self.messages_lock:
-            with self.account_lock:
-                # Get messages for user
-                messages = []
-                for msg in self.messages:
-                    if msg.recipient == username:
-                        if request.include_read or not msg.is_read:
-                            messages.append(msg)
-
+        try:
+            with self.messages_lock:
+                # Read-only operation, use persistence manager directly
+                messages_data = self.raft_node.persistence.get_messages(
+                    username=username,
+                    include_read=request.include_read
+                )
+                
+                # Convert to protocol buffer messages
+                pb_messages = []
+                for msg in messages_data:
+                    pb_messages.append(chat_pb2.Message(
+                        id=msg['id'],
+                        sender=msg['sender'],
+                        recipient=msg['recipient'],
+                        content=msg['content'],
+                        timestamp=msg['timestamp'],
+                        is_read=msg['is_read']
+                    ))
+                
                 return chat_pb2.GetMessagesResponse(
-                    messages=messages,
+                    messages=pb_messages,
                     error_message=""
                 )
+        except Exception as e:
+            logging.error(f"Error getting messages: {e}")
+            return chat_pb2.GetMessagesResponse(
+                messages=[],
+                error_message=str(e)
+            )
 
     def _get_username_from_metadata(self, context: grpc.ServicerContext) -> str:
         """
@@ -187,18 +257,32 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             )
         
         try:
-            with self.messages_lock:
-                with self.account_lock:
-                    # Mark messages as read if they belong to the user
-                    for message in self.messages:
-                        if message.id in request.message_ids and message.recipient == username:
-                            message.is_read = True
-                    
+            # Forward to leader if this node is not the leader
+            try:
+                success = self.raft_node.mark_messages_read(
+                    username=username,
+                    message_ids=list(request.message_ids)
+                )
+                
+                if success:
                     return chat_pb2.MarkReadResponse(
                         success=True,
                         error_message=""
                     )
+                else:
+                    return chat_pb2.MarkReadResponse(
+                        success=False,
+                        error_message="Failed to mark messages as read"
+                    )
+            except NotLeaderError as e:
+                context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+                context.set_details(str(e))
+                return chat_pb2.MarkReadResponse(
+                    success=False,
+                    error_message=f"Not the leader. Try {e.leader_id}"
+                )
         except Exception as e:
+            logging.error(f"Error marking messages as read: {e}")
             return chat_pb2.MarkReadResponse(
                 success=False,
                 error_message=str(e)
@@ -214,27 +298,32 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             )
         
         try:
-            with self.messages_lock:
-                with self.account_lock:
-                    # Create a new list without the deleted messages
-                    original_length = len(self.messages)
-                    self.messages = [
-                        msg for msg in self.messages 
-                        if msg.id not in request.message_ids or msg.recipient != username
-                    ]
-                    
-                    # Verify messages were actually deleted
-                    if len(self.messages) == original_length:
-                        return chat_pb2.DeleteMessagesResponse(
-                            success=False,
-                            error_message="No messages found to delete"
-                        )
-                    
+            # Forward to leader if this node is not the leader
+            try:
+                success = self.raft_node.delete_messages(
+                    username=username,
+                    message_ids=list(request.message_ids)
+                )
+                
+                if success:
                     return chat_pb2.DeleteMessagesResponse(
                         success=True,
                         error_message=""
                     )
+                else:
+                    return chat_pb2.DeleteMessagesResponse(
+                        success=False,
+                        error_message="No messages found to delete"
+                    )
+            except NotLeaderError as e:
+                context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+                context.set_details(str(e))
+                return chat_pb2.DeleteMessagesResponse(
+                    success=False,
+                    error_message=f"Not the leader. Try {e.leader_id}"
+                )
         except Exception as e:
+            logging.error(f"Error deleting messages: {e}")
             return chat_pb2.DeleteMessagesResponse(
                 success=False,
                 error_message=str(e)
@@ -244,17 +333,16 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
         """List user accounts matching pattern"""
         try:
             with self.account_lock:
-                usernames = list(self.accounts.keys())
-                
-                # Filter by pattern if provided
-                if request.pattern and request.pattern != "*":
-                    usernames = [u for u in usernames if request.pattern in u]
+                # Read-only operation, use persistence manager directly
+                pattern = request.pattern if request.pattern else "*"
+                usernames = self.raft_node.persistence.list_users(pattern)
                 
                 return chat_pb2.ListAccountsResponse(
                     usernames=usernames,
                     error_message=""
                 )
         except Exception as e:
+            logging.error(f"Error listing accounts: {e}")
             return chat_pb2.ListAccountsResponse(
                 usernames=[],
                 error_message=str(e)
@@ -265,50 +353,200 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
         try:
             username = request.username
             password_hash = request.password_hash
-            logging.info(f"Received delete account request for user: {username}")
-            
-            # Log current accounts for debugging
-            logging.debug(f"Current accounts: {list(self.accounts.keys())}")
             
             with self.account_lock:
-                # Verify account exists and password matches
-                if username not in self.accounts:
-                    logging.error(f"Account deletion failed: User {username} does not exist")
+                # First authenticate the user
+                if not self.raft_node.persistence.authenticate_user(username, password_hash):
                     return chat_pb2.DeleteAccountResponse(
                         success=False,
-                        error_message="Account does not exist"
+                        error_message="Invalid username or password"
                     )
-                    
-                if self.accounts[username] != password_hash:
-                    logging.error(f"Account deletion failed: Invalid password for user {username}")
-                    return chat_pb2.DeleteAccountResponse(
-                        success=False,
-                        error_message="Invalid password"
-                    )
-                
-                # Delete the account
-                del self.accounts[username]
-                logging.info(f"Deleted account for user: {username}")
-                
-                with self.messages_lock:
-                    # Delete all messages for this user
-                    original_message_count = len(self.messages)
-                    self.messages = [
-                        msg for msg in self.messages 
-                        if msg.sender != username and msg.recipient != username
-                    ]
-                    messages_deleted = original_message_count - len(self.messages)
-                    logging.info(f"Deleted {messages_deleted} messages for user: {username}")
-                    
-                return chat_pb2.DeleteAccountResponse(
-                    success=True,
-                    error_message=""
-                )
             
+            # Forward to leader if this node is not the leader
+            try:
+                success = self.raft_node.delete_account(username)
+                
+                if success:
+                    logging.info(f"Deleted account for user: {username}")
+                    return chat_pb2.DeleteAccountResponse(
+                        success=True,
+                        error_message=""
+                    )
+                else:
+                    return chat_pb2.DeleteAccountResponse(
+                        success=False,
+                        error_message="Failed to delete account"
+                    )
+            except NotLeaderError as e:
+                context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+                context.set_details(str(e))
+                return chat_pb2.DeleteAccountResponse(
+                    success=False,
+                    error_message=f"Not the leader. Try {e.leader_id}"
+                )
         except Exception as e:
-            logging.error(f"Error during account deletion: {str(e)}", exc_info=True)
+            logging.error(f"Error deleting account: {e}")
             return chat_pb2.DeleteAccountResponse(
                 success=False,
+                error_message=str(e)
+            )
+    
+    def GetUnreadCount(self, request: chat_pb2.UnreadCountRequest, context: grpc.ServicerContext) -> chat_pb2.UnreadCountResponse:
+        """Get count of unread messages for a user"""
+        username = self._get_username_from_metadata(context)
+        if not username:
+            return chat_pb2.UnreadCountResponse(
+                count=0,
+                error_message="Not authenticated"
+            )
+            
+        try:
+            with self.messages_lock:
+                # Read-only operation, use persistence manager directly
+                count = self.raft_node.persistence.get_unread_count(username)
+                
+                return chat_pb2.UnreadCountResponse(
+                    count=count,
+                    error_message=""
+                )
+        except Exception as e:
+            logging.error(f"Error getting unread count: {e}")
+            return chat_pb2.UnreadCountResponse(
+                count=0,
+                error_message=str(e)
+            )
+    
+    def RequestVote(self, request: chat_pb2.RequestVoteRequest, context: grpc.ServicerContext) -> chat_pb2.RequestVoteResponse:
+        """Handle RequestVote RPC from Raft"""
+        try:
+            # Forward the request to the RaftNode
+            current_term, vote_granted = self.raft_node.request_vote(
+                term=request.term,
+                candidate_id=request.candidate_id,
+                last_log_index=request.last_log_index,
+                last_log_term=request.last_log_term
+            )
+            
+            # Return the response
+            return chat_pb2.RequestVoteResponse(
+                term=current_term,
+                vote_granted=vote_granted
+            )
+        except Exception as e:
+            logging.error(f"Error processing RequestVote: {e}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return chat_pb2.RequestVoteResponse(
+                term=self.raft_node.current_term,
+                vote_granted=False
+            )
+    
+    def AppendEntries(self, request: chat_pb2.AppendEntriesRequest, context: grpc.ServicerContext) -> chat_pb2.AppendEntriesResponse:
+        """Handle AppendEntries RPC from Raft"""
+        try:
+            # Convert protobuf entries to dictionaries
+            entries = []
+            for pb_entry in request.entries:
+                entry = {
+                    'index': pb_entry.index,
+                    'term': pb_entry.term,
+                    'command_type': CommandType(pb_entry.command_type),
+                    'data': json.loads(pb_entry.data)
+                }
+                entries.append(entry)
+            
+            # Forward the request to the RaftNode
+            current_term, success = self.raft_node.append_entries(
+                term=request.term,
+                leader_id=request.leader_id,
+                prev_log_index=request.prev_log_index,
+                prev_log_term=request.prev_log_term,
+                entries=entries,
+                leader_commit=request.leader_commit
+            )
+            
+            # Return the response
+            last_index, _ = self.raft_node.persistence.get_last_log_index_and_term()
+            return chat_pb2.AppendEntriesResponse(
+                term=current_term,
+                success=success,
+                match_index=last_index
+            )
+        except Exception as e:
+            logging.error(f"Error processing AppendEntries: {e}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return chat_pb2.AppendEntriesResponse(
+                term=self.raft_node.current_term,
+                success=False,
+                match_index=0
+            )
+    
+    def GetClusterStatus(self, request: chat_pb2.ClusterStatusRequest, context: grpc.ServicerContext) -> chat_pb2.ClusterStatusResponse:
+        """Get status of the Raft cluster"""
+        try:
+            # Get status information from the RaftNode
+            last_index, _ = self.raft_node.persistence.get_last_log_index_and_term()
+            
+            state_map = {
+                ServerState.FOLLOWER: "FOLLOWER",
+                ServerState.CANDIDATE: "CANDIDATE",
+                ServerState.LEADER: "LEADER"
+            }
+            
+            # Return the response
+            return chat_pb2.ClusterStatusResponse(
+                node_id=self.raft_node.node_id,
+                state=state_map.get(self.raft_node.state, "UNKNOWN"),
+                current_term=self.raft_node.current_term,
+                leader_id=self.raft_node.leader_id or "",
+                commit_index=self.raft_node.commit_index,
+                last_applied=self.raft_node.last_applied,
+                peer_count=len(self.raft_node.peer_addresses),
+                log_count=last_index
+            )
+        except Exception as e:
+            logging.error(f"Error getting cluster status: {e}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return chat_pb2.ClusterStatusResponse(
+                node_id=self.raft_node.node_id,
+                state="ERROR",
+                current_term=0,
+                leader_id="",
+                commit_index=0,
+                last_applied=0,
+                peer_count=0,
+                log_count=0
+            )
+
+    def GetStatus(self, request, context):
+        """Get detailed status information about this server node"""
+        try:
+            with self.account_lock:
+                # Get status information from the Raft node
+                state = None
+                if self.raft_node.state == ServerState.FOLLOWER:
+                    state = chat_pb2.StatusResponse.ServerState.FOLLOWER
+                elif self.raft_node.state == ServerState.CANDIDATE:
+                    state = chat_pb2.StatusResponse.ServerState.CANDIDATE
+                elif self.raft_node.state == ServerState.LEADER:
+                    state = chat_pb2.StatusResponse.ServerState.LEADER
+                else:
+                    state = chat_pb2.StatusResponse.ServerState.UNKNOWN
+                
+                return chat_pb2.StatusResponse(
+                    state=state,
+                    current_term=self.raft_node.current_term,
+                    leader_id=self.raft_node.leader_id or "",
+                    commit_index=self.raft_node.commit_index,
+                    last_applied=self.raft_node.last_applied,
+                    error_message=""
+                )
+        except Exception as e:
+            logging.error(f"Error getting status: {e}")
+            return chat_pb2.StatusResponse(
+                state=chat_pb2.StatusResponse.ServerState.UNKNOWN,
                 error_message=str(e)
             )
 

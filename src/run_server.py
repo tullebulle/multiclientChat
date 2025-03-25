@@ -6,17 +6,34 @@ specified protocol implementation. It supports both the Custom Binary and
 JSON protocols through command-line configuration.
 
 Features:
-- Protocol selection (JSON/Custom)
+- Protocol selection (JSON/Custom/gRPC)
 - Server configuration (host/port)
+- Persistence configuration (database path)
+- Raft consensus configuration (node ID, peer addresses)
 - Graceful shutdown handling
 - Signal handling (Ctrl+C)
 - Logging configuration
 
 Usage:
-    python run_server.py [--host HOST] [--port PORT] [--protocol {json,custom}]
+    python run_server.py [--host HOST] [--port PORT] [--protocol {json,custom,grpc}] 
+                         [--db-path PATH] [--node-id ID] [--peer NODE_ID:HOST:PORT] ...
 
 Example:
-    python run_server.py --host localhost --port 9999 --protocol json
+    # Run a standalone server
+    python run_server.py --protocol grpc --port 9001 --db-path ./chat_data.db
+    
+    # Run a cluster of servers
+    # First server:
+    python run_server.py --protocol grpc --port 9001 --node-id node1 --db-path ./data/node1 \
+                         --peer node2:localhost:9002 --peer node3:localhost:9003
+                         
+    # Second server:
+    python run_server.py --protocol grpc --port 9002 --node-id node2 --db-path ./data/node2 \
+                         --peer node1:localhost:9001 --peer node3:localhost:9003
+                         
+    # Third server:
+    python run_server.py --protocol grpc --port 9003 --node-id node3 --db-path ./data/node3 \
+                         --peer node1:localhost:9001 --peer node2:localhost:9002
 """
 
 import argparse
@@ -72,6 +89,31 @@ def signal_handler(sig, frame):
     # Instead, we'll raise KeyboardInterrupt to trigger the cleanup in main()
     raise KeyboardInterrupt()
 
+def parse_peer_arg(peer_str):
+    """
+    Parse a peer argument in the format 'node_id:host:port'.
+    
+    Args:
+        peer_str: The peer string in the format 'node_id:host:port'
+        
+    Returns:
+        Tuple[str, str]: (node_id, address) where address is 'host:port'
+    """
+    parts = peer_str.split(':')
+    if len(parts) != 3:
+        raise ValueError(f"Invalid peer format: {peer_str}, expected 'node_id:host:port'")
+    
+    node_id = parts[0]
+    host = parts[1]
+    port = parts[2]
+    
+    try:
+        port = int(port)
+    except ValueError:
+        raise ValueError(f"Invalid port in peer: {port}")
+    
+    return node_id, f"{host}:{port}"
+
 def main():
     """
     Main entry point for the chat server.
@@ -82,7 +124,10 @@ def main():
     Command-line Arguments:
         --host: Server hostname or IP (default: localhost)
         --port: Server port number (default: 9999)
-        --protocol: Protocol to use (json/custom, default: custom)
+        --protocol: Protocol to use (json/custom/grpc, default: custom)
+        --db-path: Path to the database file for persistence (default: auto-generated)
+        --node-id: ID of this node in the Raft cluster (default: auto-generated)
+        --peer: Peer server address in the format 'node_id:host:port' (can be specified multiple times)
         
     The server runs until interrupted by Ctrl+C, at which point it performs
     a graceful shutdown.
@@ -93,8 +138,25 @@ def main():
     parser.add_argument(
         "--protocol",
         choices=["json", "custom", "grpc"],
-        default="custom",
+        default="grpc",
         help="Protocol to use (json, custom, or grpc)"
+    )
+    parser.add_argument(
+        "--db-path",
+        help="Path to the database file for persistence (for gRPC protocol only)"
+    )
+    parser.add_argument(
+        "--node-id",
+        help="ID of this node in the Raft cluster (for gRPC protocol only)"
+    )
+    parser.add_argument(
+        "--peer",
+        action="append",
+        help="Peer server address in the format 'node_id:host:port' (can be specified multiple times)"
+    )
+    parser.add_argument(
+        "--data-dir",
+        help="Directory to store data files (for gRPC protocol only, will create a subdirectory using node-id)"
     )
     
     args = parser.parse_args()
@@ -146,28 +208,77 @@ def main():
     # gRPC protocol
     elif args.protocol == "grpc":
         try:
-            server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-            chat_pb2_grpc.add_ChatServiceServicer_to_server(
-                ChatServicer(), server
-            )
-            # TODO: args.host and arg.port
-            logging.info(f"gRPC protocol server starting on {args.host}:{args.port}")
-            server.add_insecure_port(f'{args.host}:{args.port}')
-            server.start()
-
-            # server.wait_for_termination()
-
-            while True:
-                time.sleep(86400)  # One day in seconds
-
-        except KeyboardInterrupt:
-            server.stop(None)
-            logging.info("Server shutdown complete")
+            # Handle paths for data
+            db_path = args.db_path
+            if not db_path and args.data_dir and args.node_id:
+                # Create a data directory for this node
+                node_dir = os.path.join(args.data_dir, args.node_id)
+                os.makedirs(node_dir, exist_ok=True)
+                db_path = os.path.join(node_dir, "chat.db")
             
+            # Parse peer addresses
+            peer_addresses = {}
+            if args.peer:
+                for peer_str in args.peer:
+                    try:
+                        node_id, address = parse_peer_arg(peer_str)
+                        peer_addresses[node_id] = address
+                        logging.info(f"Added peer: {node_id} at {address}")
+                    except ValueError as e:
+                        logging.error(f"Invalid peer address: {e}")
+            
+            # Initialize server
+            server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+            
+            # Initialize ChatServicer with database path and Raft configuration
+            servicer = ChatServicer(
+                db_path=db_path,
+                node_id=args.node_id,
+                peer_addresses=peer_addresses
+            )
+            
+            chat_pb2_grpc.add_ChatServiceServicer_to_server(
+                servicer, server
+            )
+            
+            # Start the server
+            server_address = f'{args.host}:{args.port}'
+            server.add_insecure_port(server_address)
+            server.start()
+            
+            # Log server information
+            logging.info(f"gRPC protocol server started on {server_address}")
+            if args.node_id:
+                logging.info(f"Node ID: {args.node_id}")
+            if db_path:
+                logging.info(f"Using database at {db_path}")
+            if peer_addresses:
+                logging.info(f"Connected to peers: {list(peer_addresses.keys())}")
+            
+            # Keep the server running until interrupted
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                # Shutdown the Raft node first
+                if hasattr(servicer, 'raft_node'):
+                    servicer.raft_node.shutdown()
+                
+                # Stop the gRPC server
+                server.stop(0)
+                logging.info("Server shutdown complete")
+
         except Exception as e:
             logging.error(f"Error running server: {e}")
-            server.stop(None)
+            if server:
+                # Shutdown the Raft node first
+                if hasattr(servicer, 'raft_node'):
+                    servicer.raft_node.shutdown()
+                
+                # Stop the gRPC server
+                server.stop(0)
             logging.info("Server shutdown complete")
+            sys.exit(1)
 
 if __name__ == "__main__":
     main() 

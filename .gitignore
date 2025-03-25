@@ -11,3 +11,8 @@ env/
 ENV/
 .env
 .venv
+
+# Logs
+logs/
+*.log
+diagnose_replication_*.log
