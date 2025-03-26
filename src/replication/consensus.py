@@ -774,10 +774,11 @@ class RaftNode:
         
         # For each peer, send AppendEntries with any new entries
         for peer_id in self.peer_addresses:
-            try:
-                self._replicate_log_to_peer(peer_id)
-            except Exception as e:
-                logging.error(f"Error replicating log to {peer_id}: {e}")
+            if self.peer_reachable[peer_id]:
+                try:
+                    self._replicate_log_to_peer(peer_id)
+                except Exception as e:
+                    logging.error(f"Error replicating log to {peer_id}: {e}")
     
     def _replicate_log_to_peer(self, peer_id: str):
         """
