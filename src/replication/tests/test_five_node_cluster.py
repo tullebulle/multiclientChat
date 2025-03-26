@@ -15,11 +15,15 @@ import unittest
 import threading
 import shutil
 import random
+import grpc
+from concurrent import futures
 
 # Add parent directory to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
 from src.replication.consensus import RaftNode, NotLeaderError, ServerState
+from src.grpc_protocol import chat_pb2_grpc
+from src.grpc_protocol.server import ChatServicer
 
 # Configure logging
 logging.basicConfig(
@@ -39,9 +43,10 @@ class TestFiveNodeCluster(unittest.TestCase):
         self.num_nodes = 5
         self.nodes = []
         self.node_ids = [f"node{i+1}" for i in range(self.num_nodes)]
+        self.servers = []  # Store gRPC servers
+        self.servicers = []  # Store servicers
         
         # Create peer address maps for each node
-        # Each node connects to all other nodes
         peer_addresses = {}
         
         # Use port numbers starting at 50051
@@ -51,33 +56,67 @@ class TestFiveNodeCluster(unittest.TestCase):
             # For each node, map node_id -> localhost:port
             peer_addresses[node_id] = f"localhost:{port}"
         
-        # Create nodes
+        # Create nodes and start servers
         for i, node_id in enumerate(self.node_ids):
+            # Create database path
             db_path = os.path.join(self.test_dir, f"{node_id}.db")
             
             # Create a copy of peer_addresses without this node
             this_node_peers = {nid: addr for nid, addr in peer_addresses.items() if nid != node_id}
             
-            # Create the node
-            node = RaftNode(
-                node_id=node_id,
+            # Create and start a gRPC server for this node
+            port = base_port + i
+            server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+            
+            # Store the server for cleanup
+            self.servers.append(server)
+            
+            # Create a ChatServicer with this node's configuration
+            servicer = ChatServicer(
                 db_path=db_path,
+                node_id=node_id,
                 peer_addresses=this_node_peers
             )
             
-            self.nodes.append(node)
+            # Store the servicer and node for access in tests
+            self.servicers.append(servicer)
+            self.nodes.append(servicer.raft_node)
+            
+            # Add the servicer to the server
+            chat_pb2_grpc.add_ChatServiceServicer_to_server(servicer, server)
+            
+            # Start the server
+            server.add_insecure_port(f"[::]:{port}")
+            server.start()
+            
+            logging.info(f"Started gRPC server for {node_id} on port {port}")
         
         # Give the nodes time to initialize and elect a leader
         time.sleep(3.0)
     
     def tearDown(self):
         """Clean up after each test"""
+        logging.info("Tearing down test...")
+        
+        # Shut down all gRPC servers
+        for server in self.servers:
+            try:
+                server.stop(1.0)  # 1 second grace period
+            except Exception as e:
+                logging.warning(f"Error stopping server: {e}")
+        
+        # Wait a moment for servers to shut down
+        time.sleep(1.0)
+        
         # Shut down all Raft nodes
         for node in self.nodes:
             try:
                 node.shutdown()
-            except:
-                pass
+            except Exception as e:
+                logging.warning(f"Error shutting down node: {e}")
+        
+        # Wait for proper cleanup
+        time.sleep(1.0)
         
         # Remove the temporary directory
         try:
@@ -137,9 +176,22 @@ class TestFiveNodeCluster(unittest.TestCase):
         failed_nodes_ids = [node.node_id for node in nodes_to_fail]
         logging.info(f"Failing nodes: {failed_nodes_ids}")
         
+        # Find indexes of nodes to fail
+        failed_indexes = []
         for node in nodes_to_fail:
+            idx = self.nodes.index(node)
+            failed_indexes.append(idx)
+            # Shut down the gRPC server first
+            self.servers[idx].stop(0)
+            # Then shut down the node
             node.shutdown()
-            self.nodes.remove(node)
+        
+        # Remove failed nodes and servers from our lists
+        # Remove in reverse order to avoid index shifting problems
+        for idx in sorted(failed_indexes, reverse=True):
+            del self.nodes[idx]
+            del self.servers[idx]
+            del self.servicers[idx]
         
         # Give time for recovery and possible leader election
         time.sleep(5.0)
