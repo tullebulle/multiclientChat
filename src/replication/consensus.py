@@ -392,9 +392,9 @@ class RaftNode:
             try:
                 # Add detailed logging about the heartbeat/AppendEntries
                 if not entries:
-                    logging.info(f"Received heartbeat from leader {leader_id} for term {term}")
+                    logging.debug(f"Received heartbeat from leader {leader_id} for term {term}")
                 else:
-                    logging.info(f"Received AppendEntries from leader {leader_id} for term {term} with {len(entries)} entries")
+                    logging.debug(f"Received AppendEntries from leader {leader_id} for term {term} with {len(entries)} entries")
                 
                 # If the leader's term is lower, reject the request
                 if term < self.current_term:
@@ -402,7 +402,7 @@ class RaftNode:
                     return self.current_term, False
                 
                 # Reset the election timer upon receiving valid AppendEntries
-                logging.info(f"Resetting election timer due to heartbeat from leader {leader_id}")
+                logging.debug(f"Resetting election timer due to heartbeat from leader {leader_id}")
                 self._reset_election_timer()
             
                 # If the leader's term is higher or we're a candidate, update our term and become a follower
@@ -1145,7 +1145,7 @@ class RaftNode:
             for peer_id in self.peer_reachable:
                 try:
                     if self.peer_reachable[peer_id]:
-                        logging.info(f"Sending heartbeat to {peer_id}")
+                        logging.debug(f"Sending heartbeat to {peer_id}")
                         # Send heartbeat to this peer
                         self._send_heartbeat(peer_id)
                         successful_peers += 1

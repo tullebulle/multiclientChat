@@ -16,3 +16,4 @@ ENV/
 logs/
 *.log
 diagnose_replication_*.log
+data/
