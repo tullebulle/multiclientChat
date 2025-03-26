@@ -28,3 +28,14 @@ python src/run_server.py --protocol grpc --host 10.250.121.174 --port 9003 --nod
 ```
 
 
+ULRIK TESTING
+
+# Node 1
+python src/run_server.py --protocol grpc --host 192.168.12.183 --port 9001 --node-id node1 --db-path ./data/node1.db --peer node2:192.168.12.183:9002 --peer node3:192.168.12.202:9003
+
+# Node 2
+python src/run_server.py --protocol grpc --host 192.168.12.183 --port 9002 --node-id node2 --db-path ./data/node2.db --peer node1:192.168.12.183:9001 --peer node3:192.168.12.202:9003
+
+# Node 3
+python src/run_server.py --protocol grpc --host 192.168.12.202 --port 9003 --node-id node3 --db-path ./data/node3.db --peer node1:192.168.12.183:9001 --peer node2:192.168.12.183:9002
+
