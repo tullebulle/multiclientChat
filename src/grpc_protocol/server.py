@@ -550,6 +550,33 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
 
     def GetStatus(self, request, context):
         """Get detailed status information about this server node"""
+
+        # Extract the address of the caller from context
+        peer_info = context.peer()
+        logging.debug(f"Status request received from: {peer_info}")
+        # peer_info is typically in the format "ipv4:127.0.0.1:12345" or "ipv6:[::1]:12345"
+
+        # We can extract just the address part if needed
+        caller_address = peer_info
+        if ":" in peer_info:
+            # Split by colon and reconstruct the address
+            parts = peer_info.split(":")
+            if len(parts) >= 3:  # Format like "ipv4:127.0.0.1:12345"
+                caller_address = f"{parts[1]}:{parts[2]}"
+            elif len(parts) == 2:  # Format like "localhost:12345"
+                caller_address = peer_info
+        
+        logging.info(f"Status request from {caller_address}")
+
+        try:
+            with self.account_lock:
+                if caller_address not in self.raft_node.peer_addresses.items():
+                    node_id = 'new_node' + str(len(self.raft_node.peer_addresses) + 1)
+                    self.raft_node.peer_addresses[node_id] = caller_address
+        except Exception as e:
+            logging.error(f"Error adding new peer: {e}")
+
+
         try:
             with self.account_lock:
                 # Get status information from the Raft node
@@ -571,6 +598,8 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                     last_applied=self.raft_node.last_applied,
                     error_message=""
                 )
+           
+
         except Exception as e:
             logging.error(f"Error getting status: {e}")
             return chat_pb2.StatusResponse(

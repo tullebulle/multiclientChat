@@ -365,10 +365,10 @@ class ChatGUI:
             
             self.message_display.config(state=tk.DISABLED)
             
-            # Mark messages as read
-            unread_ids = [msg['id'] for msg in messages if not msg['is_read']]
-            if unread_ids:
-                self.client.mark_read(unread_ids)
+            # # Mark messages as read
+            # unread_ids = [msg['id'] for msg in messages if not msg['is_read']]
+            # if unread_ids:
+            #     self.client.mark_read(unread_ids)
         except Exception as e:
             logging.error(f"Error refreshing messages: {e}")
     
