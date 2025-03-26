@@ -37,7 +37,7 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
         accounts_lock: Lock for thread-safe account operations
     """
     
-    def __init__(self, db_path=None, node_id=None, peer_addresses=None):
+    def __init__(self, db_path=None, node_id=None, address = None, peer_addresses=None):
         """
         Initialize the ChatServicer.
         
@@ -62,7 +62,7 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             peer_addresses = {}
         
         # Initialize Raft node with persistence manager
-        self.raft_node = RaftNode(node_id=node_id, db_path=db_path, peer_addresses=peer_addresses)
+        self.raft_node = RaftNode(node_id=node_id, address=address, db_path=db_path, peer_addresses=peer_addresses)
         
         logging.info(f"Initialized ChatServicer with node_id={node_id}, db_path={db_path}, "
                     f"peers={list(peer_addresses.keys())}")
@@ -551,30 +551,23 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
     def GetStatus(self, request, context):
         """Get detailed status information about this server node"""
 
-        # Extract the address of the caller from context
-        peer_info = context.peer()
-        logging.debug(f"Status request received from: {peer_info}")
-        # peer_info is typically in the format "ipv4:127.0.0.1:12345" or "ipv6:[::1]:12345"
-
-        # We can extract just the address part if needed
-        caller_address = peer_info
-        if ":" in peer_info:
-            # Split by colon and reconstruct the address
-            parts = peer_info.split(":")
-            if len(parts) >= 3:  # Format like "ipv4:127.0.0.1:12345"
-                caller_address = f"{parts[1]}:{parts[2]}"
-            elif len(parts) == 2:  # Format like "localhost:12345"
-                caller_address = peer_info
+        # Extract node_id and address from the request
+        node_id = request.node_id
+        address = request.address
         
-        logging.info(f"Status request from {caller_address}")
-
+        # Log the request details
+        logging.info(f"Status request received from node_id={node_id}, address={address}")
+        
+        # If this is a new peer, add it to our peer list for discovery
         try:
-            with self.account_lock:
-                if caller_address not in self.raft_node.peer_addresses.values():
-                    node_id = 'node' + str(len(self.raft_node.peer_addresses) + 2)
-                    self.raft_node.peer_addresses[node_id] = caller_address
+            if node_id and address and node_id != self.raft_node.node_id:
+                if node_id not in self.raft_node.peer_addresses:
+                    logging.info(f"Adding new peer to discovery list: {node_id} at {address}")
+                    self.raft_node.peer_addresses[node_id] = address
+                    # Initialize peer as unreachable until connectivity check confirms
+                    self.raft_node.peer_reachable[node_id] = False
         except Exception as e:
-            logging.error(f"Error adding new peer: {e}")
+            logging.error(f"Error adding new peer{node_id} at {address}: {e}")
 
 
         try:

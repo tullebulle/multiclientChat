@@ -229,10 +229,12 @@ def main():
             
             # Initialize server
             server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+            server_address = f'{args.host}:{args.port}'
             
             # Initialize ChatServicer with database path and Raft configuration
             servicer = ChatServicer(
                 db_path=db_path,
+                address=server_address,
                 node_id=args.node_id,
                 peer_addresses=peer_addresses
             )
@@ -242,7 +244,7 @@ def main():
             )
             
             # Start the server
-            server_address = f'{args.host}:{args.port}'
+            
             server.add_insecure_port(server_address)
             server.start()
             

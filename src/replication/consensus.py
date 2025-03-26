@@ -61,7 +61,7 @@ class RaftNode:
     maintaining consensus among a cluster of servers.
     """
     
-    def __init__(self, node_id: str, db_path: str, peer_addresses: Dict[str, str]):
+    def __init__(self, node_id: str, address:str, db_path: str, peer_addresses: Dict[str, str]):
         """
         Initialize a Raft node.
         
@@ -71,6 +71,7 @@ class RaftNode:
             peer_addresses: Dictionary mapping peer node IDs to their addresses
         """
         self.node_id = node_id
+        self.address = address
         self.persistence = PersistenceManager(db_path)
         
         # Keep all peer addresses
@@ -1294,7 +1295,10 @@ class RaftNode:
                 stub = chat_pb2_grpc.ChatServiceStub(channel)
                 
                 # Try a simple status call to check connectivity with a short timeout
-                request = chat_pb2.StatusRequest()
+                request = chat_pb2.StatusRequest(
+                    node_id = self.node_id,
+                    address = self.address
+                )
                 response = stub.GetStatus(request, timeout=1.0)
                 
                 # If we reach here, the peer is reachable

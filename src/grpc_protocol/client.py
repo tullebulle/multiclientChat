@@ -750,7 +750,10 @@ class GRPCChatClient:
                 return {"error": "Failed to connect to any server"}
         
         try:
-            request = chat_pb2.StatusRequest()
+            request = chat_pb2.StatusRequest(
+                node_id = '',
+                address = ''
+            )
             response = self.stub.GetStatus(request, timeout=5.0)
             
             status = {
