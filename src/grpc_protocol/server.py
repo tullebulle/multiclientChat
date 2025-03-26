@@ -570,8 +570,8 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
 
         try:
             with self.account_lock:
-                if caller_address not in self.raft_node.peer_addresses.items():
-                    node_id = 'new_node' + str(len(self.raft_node.peer_addresses) + 1)
+                if caller_address not in self.raft_node.peer_addresses.values():
+                    node_id = 'node' + str(len(self.raft_node.peer_addresses) + 2)
                     self.raft_node.peer_addresses[node_id] = caller_address
         except Exception as e:
             logging.error(f"Error adding new peer: {e}")
