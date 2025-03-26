@@ -16,5 +16,24 @@
         "database": "./data/node3.db",
         "host": "10.250.121.174",
         "port": 9003
+    },
+    {
+        "node_id": "node1",
+        "database": "./data/node1.db",
+        "host": "192.168.12.183",
+        "port": 9001
+    },
+    {
+        "node_id": "node2", 
+        "database": "./data/node2.db",
+        "host": "192.168.12.183",
+        "port": 9002
+    },
+    {
+        "node_id": "node3",
+        "database": "./data/node3.db",
+        "host": "10.250.121.174",
+        "port": 9003
     }
 ]
+
