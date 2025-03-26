@@ -519,6 +519,10 @@ This work has given us confidence in our Raft implementation, confirming that it
 6. Kill another node
 7. Verify system still functions correctly
 
+
+### Dynamic adding of servers
+Add more servers dynamically and show that they pick eachother up.
+
 ## Metrics for Success
 
 1. **Data Durability**: No loss of committed data during failures or restarts

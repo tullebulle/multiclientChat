@@ -111,6 +111,7 @@ class ChatGUI:
         
         ttk.Button(button_frame, text="Login", command=self.login).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Create Account", command=self.create_account).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Delete Account").pack(side=tk.LEFT, padx=5)
         
         # Status
         self.login_status_var = tk.StringVar()
