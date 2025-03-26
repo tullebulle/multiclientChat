@@ -547,11 +547,3 @@ The key lessons learned from this exercise include:
 2. **Mocking External Dependencies**: By creating a mock network layer, we separated the Raft algorithm's logic from the network communication details, making testing more reliable and deterministic.
 
 3. **Incremental Implementation**: Our step-by-step approach, implementing one feature at a time and testing thoroughly before moving on, has helped us build a solid foundation for the chat system.
-
-For the upcoming demo, we still need to:
-
-1. Complete the implementation of the client to handle leader redirections
-2. Create tools for demo and monitoring of the cluster state
-3. Prepare a script to demonstrate persistence and fault tolerance
-
-The work done so far puts us in a good position to complete these remaining tasks and deliver a robust, persistent, and fault-tolerant chat system. 
