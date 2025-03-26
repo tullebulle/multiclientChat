@@ -15,11 +15,15 @@ import unittest
 import threading
 import shutil
 import random
+import grpc
+from concurrent import futures
 
 # Add parent directory to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
-from src.grpc_protocol.consensus import RaftNode, NotLeaderError, ServerState
+from src.replication.consensus import RaftNode, NotLeaderError, ServerState
+from src.grpc_protocol import chat_pb2_grpc
+from src.grpc_protocol.server import ChatServicer
 
 # Configure logging
 logging.basicConfig(
@@ -39,6 +43,8 @@ class TestRaftMultiNode(unittest.TestCase):
         self.num_nodes = 3
         self.nodes = []
         self.node_ids = [f"node{i+1}" for i in range(self.num_nodes)]
+        self.servers = []  # Store gRPC servers
+        self.servicers = []  # Store servicers so we can access them in tests
         
         # Create peer address maps for each node
         # Each node connects to all other nodes
@@ -51,32 +57,68 @@ class TestRaftMultiNode(unittest.TestCase):
             # For each node, map node_id -> localhost:port
             peer_addresses[node_id] = f"localhost:{port}"
         
-        # Create nodes
+        # Create nodes and start servers
         for i, node_id in enumerate(self.node_ids):
+            # Create unique database file path
             db_path = os.path.join(self.test_dir, f"{node_id}.db")
             
             # Create a copy of peer_addresses without this node
             this_node_peers = {nid: addr for nid, addr in peer_addresses.items() if nid != node_id}
             
-            # Create the node
-            node = RaftNode(
-                node_id=node_id,
+            # Create a gRPC server for this node
+            port = base_port + i
+            server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+            
+            # Store the server for cleanup
+            self.servers.append(server)
+            
+            # Create a ChatServicer with its own RaftNode
+            servicer = ChatServicer(
                 db_path=db_path,
+                node_id=node_id,
                 peer_addresses=this_node_peers
             )
             
-            self.nodes.append(node)
+            # Store the servicer for access in tests
+            self.servicers.append(servicer)
+            
+            # Also store the raftnode for direct access in tests
+            self.nodes.append(servicer.raft_node)
+            
+            # Add the servicer to the server
+            chat_pb2_grpc.add_ChatServiceServicer_to_server(servicer, server)
+            
+            # Start the server
+            server.add_insecure_port(f"[::]:{port}")
+            server.start()
+            
+            logging.info(f"Started gRPC server for {node_id} on port {port}")
         
-        # Give the nodes time to initialize and elect a leader
+        # Give the nodes time to initialize and connect to each other
         time.sleep(3.0)
     
     def tearDown(self):
         """Clean up after each test"""
+        logging.info("Tearing down test...")
+        
+        # Shut down all servers with grace period
+        for server in self.servers:
+            server.stop(1.0)  # 1 second grace period
+        
+        # Wait a moment for servers to shut down
+        time.sleep(1.0)
+        
         # Shut down all Raft nodes
         for node in self.nodes:
-            node.shutdown()
+            try:
+                node.shutdown()
+            except Exception as e:
+                logging.warning(f"Error shutting down node: {e}")
         
-        # Remove the temporary directory
+        # Wait for everything to clean up
+        time.sleep(1.0)
+        
+        # Remove the temporary directory and its contents
         try:
             shutil.rmtree(self.test_dir)
         except Exception as e:
@@ -91,17 +133,19 @@ class TestRaftMultiNode(unittest.TestCase):
         leaders = [node for node in self.nodes if node.state == ServerState.LEADER]
         
         # There should be exactly one leader
-        self.assertEqual(len(leaders), 1)
+        self.assertEqual(len(leaders), 1, f"Expected 1 leader, got {len(leaders)}")
         
         # All nodes should have the same leader_id
         leader_id = leaders[0].node_id
         for node in self.nodes:
-            self.assertEqual(node.leader_id, leader_id)
+            self.assertEqual(node.leader_id, leader_id, 
+                            f"Node {node.node_id} has leader_id {node.leader_id}, expected {leader_id}")
             
         # All nodes should have the same term
         term = leaders[0].current_term
         for node in self.nodes:
-            self.assertEqual(node.current_term, term)
+            self.assertEqual(node.current_term, term, 
+                            f"Node {node.node_id} has term {node.current_term}, expected {term}")
     
     def test_log_replication(self):
         """Test that log entries are replicated to all nodes"""

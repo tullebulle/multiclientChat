@@ -23,7 +23,7 @@ from concurrent import futures
 # Add the parent directory to sys.path to allow importing from src
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
-from src.grpc_protocol.persistence import PersistenceManager
+from src.replication.persistence import PersistenceManager
 from src.grpc_protocol.server import ChatServicer
 from src.grpc_protocol import chat_pb2, chat_pb2_grpc
 

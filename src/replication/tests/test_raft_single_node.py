@@ -18,7 +18,7 @@ import shutil
 # Add parent directory to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
-from src.grpc_protocol.consensus import RaftNode, NotLeaderError, ServerState
+from src.replication.consensus import RaftNode, NotLeaderError, ServerState
 
 # Configure logging
 logging.basicConfig(
