@@ -233,6 +233,20 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                     messages=pb_messages,
                     error_message=""
                 )
+        except NotLeaderError as e:
+            # Forward the request to the leader instead of returning an error
+            response = self._forward_to_leader(request, "SendMessage", context)
+            if response:
+                return response
+            
+            # If forwarding failed, return the original error
+            context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+            context.set_details(str(e))
+            return chat_pb2.SendMessageResponse(
+                message_id=0,
+                error_message=f"Not the leader. Try {e.leader_id}"
+            )
+        
         except Exception as e:
             logging.error(f"Error getting messages: {e}")
             return chat_pb2.GetMessagesResponse(

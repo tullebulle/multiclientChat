@@ -1235,15 +1235,35 @@ class RaftNode:
             logging.error(f"Error sending heartbeat to {peer_id}: {e}")
     
     def _save_indices(self):
-        """Save current commit and last applied indices to persistent storage"""
-        try:
-            self.persistence.save_metadata('commit_index', self.commit_index)
-            self.persistence.save_metadata('last_applied', self.last_applied)
-            logging.debug(f"Saved indices: commit_index={self.commit_index}, last_applied={self.last_applied}")
-            return True
-        except Exception as e:
-            logging.error(f"Error saving indices: {e}")
-            return False
+        """Save current commit and last applied indices to persistent storage with retries"""
+        max_retries = 5
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # Try to save both indices
+                commit_saved = self.persistence.save_metadata('commit_index', self.commit_index)
+                if not commit_saved:
+                    raise Exception("Failed to save commit_index")
+                    
+                applied_saved = self.persistence.save_metadata('last_applied', self.last_applied)
+                if not applied_saved:
+                    raise Exception("Failed to save last_applied")
+                    
+                logging.debug(f"Saved indices: commit_index={self.commit_index}, last_applied={self.last_applied}")
+                return True
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = 0.1 * retry_count
+                    logging.warning(f"Error saving indices, retrying in {wait_time}s: {e}")
+                    time.sleep(wait_time)
+                else:
+                    logging.error(f"Failed to save indices after {max_retries} retries: {e}")
+                    return False
+        
+        return False
 
     def _start_peer_discovery(self):
         """Start the thread that periodically checks peer connectivity"""

@@ -49,11 +49,11 @@ class GRPCChatClient:
         self.current_server_idx = 0
         self.leader_address = None
         
-        # Node ID to port mapping for redirection
-        self.node_id_to_port = {
-            "node1": "9001",
-            "node2": "9002", 
-            "node3": "9003"
+        # Create a mapping from node IDs to full addresses
+        self.node_id_to_address = {
+            "node1": "10.250.231.222:9001",
+            "node2": "10.250.231.222:9002", 
+            "node3": "10.250.121.174:9003"
         }
         
         self.channel = None
@@ -207,10 +207,9 @@ class GRPCChatClient:
                         break
             
             if leader_id:
-                # Try to map node ID to port using our mapping
-                if leader_id in self.node_id_to_port:
-                    port = self.node_id_to_port[leader_id]
-                    leader_address = f"localhost:{port}"
+                # Try to map node ID to full address using our mapping
+                if leader_id in self.node_id_to_address:
+                    leader_address = self.node_id_to_address[leader_id]
                     logging.info(f"Mapped leader ID {leader_id} to address {leader_address}")
                     
                     # Connect to the leader
@@ -400,36 +399,53 @@ class GRPCChatClient:
         if not self.auth_status:
             return 0, "Not authenticated"
         
+        # Check if stub exists
+        if self.stub is None:
+            logging.error("Cannot send message: stub is None, attempting to reconnect")
+            if not self.connect():
+                return 0, "Failed to connect to any server"
+        
         max_retries = 3
         retry_count = 0
         
         while retry_count < max_retries:
+            logging.info(f"Send message attempt {retry_count + 1}/{max_retries}")
             try:
                 request = chat_pb2.SendMessageRequest(
                     recipient=recipient,
                     content=content
                 )
                 
+                logging.info(f"Sending message to server at {self.leader_address or 'unknown'}")
                 response = self.stub.SendMessage(
                     request,
-                    metadata=self._get_auth_metadata()
+                    metadata=self._get_auth_metadata(),
+                    timeout=5.0
                 )
                 
                 if response.message_id > 0:
+                    logging.info(f"Message successfully sent to {recipient}")
                     return response.message_id, ""
                 else:
+                    logging.warning(f"Message sending failed: {response.error_message}")
                     return 0, response.error_message
             
             except grpc.RpcError as e:
+                logging.error(f"RPC error during message sending: {e.code()}, {e.details()}")
                 if self._handle_rpc_error(e):
                     retry_count += 1
-                    time.sleep(0.5 * retry_count)  # Exponential backoff
+                    backoff_time = 0.5 * retry_count
+                    logging.info(f"Retrying after {backoff_time} seconds (attempt {retry_count}/{max_retries})")
+                    time.sleep(backoff_time)  # Exponential backoff
                 else:
+                    logging.error(f"Failed to handle RPC error: {e}")
                     return 0, str(e)
             
             except Exception as e:
+                logging.exception(f"Unexpected error during message sending: {e}")
                 return 0, str(e)
         
+        logging.error("Message sending failed: Max retries exceeded")
         return 0, "Max retries exceeded"
     
     def get_messages(self, include_read=False) -> Tuple[List[Dict], str]:
@@ -690,9 +706,8 @@ class GRPCChatClient:
                 }
                 
                 # Store leader ID for future connections
-                if response.leader_id and response.leader_id in self.node_id_to_port:
-                    leader_port = self.node_id_to_port[response.leader_id]
-                    self.leader_address = f"localhost:{leader_port}"
+                if response.leader_id and response.leader_id in self.node_id_to_address:
+                    self.leader_address = self.node_id_to_address[response.leader_id]
                     logging.info(f"Updated leader address to {self.leader_address}")
                 
                 return status, ""

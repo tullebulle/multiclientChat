@@ -10,6 +10,7 @@ import logging
 import json
 import os
 import time
+import threading
 from typing import List, Dict, Tuple, Optional, Any, Union
 from enum import Enum, auto
 
@@ -45,8 +46,10 @@ class PersistenceManager:
         
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA journal_mode=WAL")  # Use Write-Ahead Logging for better concurrency
+        self.conn.execute("PRAGMA synchronous=NORMAL")  # Better performance with reasonable safety
         self.conn.row_factory = sqlite3.Row
+        self.db_lock = threading.RLock()  # Add a reentrant lock
         
         # Initialize tables
         self._init_tables()
@@ -572,7 +575,7 @@ class PersistenceManager:
     
     def save_metadata(self, key: str, value: Union[str, int, bool, Dict]) -> bool:
         """
-        Save a metadata key-value pair.
+        Save a metadata key-value pair with proper locking.
         
         Args:
             key: Metadata key
@@ -581,25 +584,44 @@ class PersistenceManager:
         Returns:
             bool: True if metadata was saved successfully, False otherwise
         """
-        try:
-            # Convert value to JSON string if it's not already a string
-            if not isinstance(value, str):
-                value = json.dumps(value)
+        # Convert value to JSON string if it's not already a string
+        if not isinstance(value, str):
+            value = json.dumps(value)
+        
+        max_retries = 5
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                with self.db_lock:  # Use a lock to prevent concurrent writes
+                    with self.conn:  # This transaction is now protected by the lock
+                        self.conn.execute(
+                            """
+                            INSERT OR REPLACE INTO metadata (key, value)
+                            VALUES (?, ?)
+                            """,
+                            (key, value)
+                        )
             
-            with self.conn:
-                self.conn.execute(
-                    """
-                    INSERT OR REPLACE INTO metadata (key, value)
-                    VALUES (?, ?)
-                    """,
-                    (key, value)
-                )
+                logging.debug(f"Saved metadata {key}={value}")
+                return True
             
-            logging.debug(f"Saved metadata {key}={value}")
-            return True
-        except Exception as e:
-            logging.error(f"Error saving metadata: {e}")
-            return False
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e):
+                    retry_count += 1
+                    wait_time = 0.1 * retry_count  # Exponential backoff
+                    logging.warning(f"Database locked while saving {key}, retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    logging.error(f"SQLite error saving metadata: {e}")
+                    return False
+                
+            except Exception as e:
+                logging.error(f"Error saving metadata: {e}")
+                return False
+        
+        logging.error(f"Failed to save metadata {key} after {max_retries} retries: database is locked")
+        return False
     
     def get_metadata(self, key: str, default: Any = None) -> Any:
         """
