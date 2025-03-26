@@ -244,6 +244,7 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
             response = self._forward_to_leader(request, "GetMessages", context)
             if response:
                 return response
+            logging.error(f"Error getting messages: {e}")
             
             # If forwarding failed, return the original error
             context.set_code(grpc.StatusCode.FAILED_PRECONDITION)

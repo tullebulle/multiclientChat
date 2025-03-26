@@ -41,10 +41,9 @@ class GRPCChatClient:
                    or a comma-separated list of server addresses
         """
         # Parse server string
-        if "," in server:
-            self.servers = server.split(",")
-        else:
-            self.servers = [server]
+        self.servers = ["10.250.231.222:9001", "10.250.231.222:9002", "10.250.121.174:9003"]
+        #shuffle the servers
+        random.shuffle(self.servers)
             
         self.current_server_idx = 0
         self.leader_address = None
@@ -82,11 +81,6 @@ class GRPCChatClient:
         
         # Try all servers in the list
         servers_to_try = list(self.servers)  # Make a copy of the servers list
-        
-        # If we know the leader, try it first
-        if self.leader_address and self.leader_address in servers_to_try:
-            servers_to_try.remove(self.leader_address)
-            servers_to_try.insert(0, self.leader_address)
         
         # Try each server until one works
         for server in servers_to_try:
