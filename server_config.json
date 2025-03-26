@@ -32,7 +32,7 @@
     {
         "node_id": "node3",
         "database": "./data/node3.db",
-        "host": "10.250.121.174",
+        "host": "192.168.12.202",
         "port": 9003
     }
 ]
