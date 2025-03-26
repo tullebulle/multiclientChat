@@ -41,9 +41,13 @@ class GRPCChatClient:
                    or a comma-separated list of server addresses
         """
         # Parse server string
-        self.servers = ["10.250.231.222:9001", "10.250.231.222:9002", "10.250.121.174:9003"]
-        #shuffle the servers
-        random.shuffle(self.servers)
+        options = ["10.250.231.222:9001", "10.250.231.222:9002", "10.250.121.174:9003"]
+        random.shuffle(options)
+        
+        if server:
+            self.servers = [server] + [option for option in options if option != server]
+        else:
+            self.servers = options            
             
         self.current_server_idx = 0
         self.leader_address = None
